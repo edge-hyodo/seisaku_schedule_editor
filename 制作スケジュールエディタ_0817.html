@@ -1,0 +1,2248 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>制作スケジュール エディタ</title>
+<style>
+:root{
+  --chrome:#1f2937; --chrome-2:#111827; --paper:#ffffff;
+  --line:#e5e7eb; --line-strong:#cbd5e1;
+  --dayoff:rgba(120,120,125,.16); --holiday:rgba(150,110,60,.14);
+  --dayoff-solid:#C0C0C0;   /* 休日帯の実色。Excel書き出しのGRAY定数と必ず一致させる(v2.12.0) */
+  --accent:#0f766e; --accent-soft:#ccfbf1; --danger:#c00000;
+  --ink:#111827; --ink-soft:#6b7280;
+  --row-h:22px; --col-w:134px; --rail-w:98px;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{
+  font-family:"Hiragino Kaku Gothic ProN","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  font-size:13px; color:var(--ink); background:#f3f4f6; overflow:hidden;
+  display:flex; flex-direction:column; height:100vh;
+}
+/* ---- toolbar ---- */
+#toolbar{
+  min-height:46px; flex-shrink:0; background:var(--chrome); color:#f9fafb; display:flex; align-items:center;
+  flex-wrap:wrap; gap:6px 10px; padding:6px 14px; position:relative; z-index:50;
+}
+#toolbar h1{font-size:14px; font-weight:700; letter-spacing:.06em; margin-right:6px; white-space:nowrap;}
+#toolbar .sub{font-size:11px; color:#9ca3af; white-space:nowrap;}
+#toolbar #rangeLabel{margin-right:auto;}
+#saveState{margin-left:auto;}
+@media (max-width:1100px){ #toolbar #rangeLabel{display:none;} }
+@media (max-width:900px){ #toolbar h1{margin-right:2px;} }
+.tb-group{display:flex; align-items:center; gap:4px; background:var(--chrome-2);
+  border-radius:6px; padding:3px;}
+.tb-group span.lbl{font-size:11px; color:#9ca3af; padding:0 6px;}
+button{
+  font-family:inherit; font-size:12.5px; border:none; border-radius:4px; cursor:pointer;
+  background:transparent; color:#e5e7eb; padding:5px 9px; white-space:nowrap;
+}
+button:hover{background:#374151;}
+button.on{background:var(--accent); color:#fff;}
+button.histbtn{background:#374151; border:1px solid #6b7280; color:#f3f4f6;}
+button.histbtn:hover:not(:disabled){background:#4b5563; border-color:#9ca3af;}
+button.histbtn:disabled{opacity:.4;}
+button:focus-visible{outline:2px solid #99f6e4; outline-offset:1px;}
+button:disabled{opacity:.35; cursor:default;}
+#saveState{font-size:11.5px; color:#9ca3af; min-width:88px; text-align:right;}
+/* ---- empty guide ---- */
+#emptyGuide{position:absolute; left:var(--rail-w); top:52px; right:0; bottom:0;
+  display:flex; align-items:flex-start; justify-content:center; pointer-events:none; z-index:18;}
+#emptyGuide .eg-card{margin-top:80px; max-width:380px; text-align:center; pointer-events:auto;
+  background:var(--paper); border:1px solid var(--line-strong); border-radius:12px; padding:22px 26px;
+  box-shadow:0 4px 16px rgba(0,0,0,.08);}
+#emptyGuide .eg-icon{font-size:26px;}
+#emptyGuide .eg-title{font-size:15px; font-weight:700; color:var(--ink); margin:8px 0 6px;}
+#emptyGuide .eg-body{font-size:13px; color:var(--ink-soft); line-height:1.8;}
+/* ---- tabs ---- */
+#tabs{height:34px; flex-shrink:0; background:#e2e8f0; display:flex; align-items:flex-end; padding:0 8px; gap:2px;
+  border-bottom:1px solid var(--line-strong); overflow-x:auto;}
+.tab{display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12.5px; cursor:pointer;
+  background:#cbd5e1; border-radius:6px 6px 0 0; color:#334155; white-space:nowrap; user-select:none;}
+.tab.on{background:var(--paper); font-weight:700; color:var(--ink);}
+.tab .tx{padding:1px 3px; border-radius:2px; color:#94a3b8; font-size:12px;}
+.tab .tx:hover{background:var(--danger); color:#fff;}
+.tab input{font-family:inherit; font-size:11px; width:90px; border:1px solid var(--accent); border-radius:3px;}
+#tabAdd{padding:5px 11px; font-size:14px; background:transparent; color:#475569; border-radius:4px;}
+#tabAdd:hover{background:#cbd5e1;}
+#tabMenu{position:fixed; z-index:200; background:#fff; border:1px solid var(--line-strong);
+  border-radius:6px; box-shadow:0 6px 20px rgba(0,0,0,.18); min-width:220px; padding:4px; font-size:12.5px;}
+.tmItem{padding:7px 10px; border-radius:4px; cursor:pointer; color:var(--ink);}
+.tmItem:hover{background:var(--accent-soft);}
+.tmHr{padding:4px 10px 2px; font-size:10.5px; color:var(--ink-soft);}
+/* ---- layout ---- */
+#wrap{display:flex; flex:1; min-height:0;}
+#scroller{flex:1; overflow:auto; position:relative; background:var(--paper);}
+#canvas{position:relative;}
+/* header row of sections */
+#colHead{
+  position:sticky; top:0; z-index:30; display:flex; background:#f8fafc;
+  border-bottom:2px solid var(--line-strong); width:max-content;
+}
+#colHead .corner{
+  position:sticky; left:0; width:var(--rail-w); flex:0 0 var(--rail-w);
+  background:#f8fafc; z-index:31; border-right:2px solid var(--line-strong);
+  display:flex; flex-direction:column;
+}
+#colHead .corner .clab{
+  margin-top:auto; font-size:10px; color:#94a3b8; text-align:right;
+  padding:4px 6px 3px 0; border-top:1px solid var(--line); min-height:20px; box-sizing:border-box;
+}
+#colHead .corner .clab+.clab{margin-top:0; border-top:1px dashed var(--line);}
+#colHead .ch{
+  width:var(--col-w); flex:0 0 var(--col-w); padding:7px 7px; font-size:12px; font-weight:700;
+  display:flex; flex-direction:column; align-items:center;
+  border-right:1px solid var(--line); color:#334155; line-height:1.4; min-height:46px;
+}
+#colHead .ch.ev{background:#fffbeb;}
+#colHead .ch{position:relative; cursor:default;}
+#colHead .ch:not(.ev):hover{background:#eef2f7;}
+#colHead .ch .cbtns{position:absolute; right:2px; top:2px; display:flex; gap:2px;
+  background:transparent; border-radius:4px; padding:1px 2px; opacity:.35;}
+#colHead .ch:hover .cbtns{opacity:1;}
+#colHead .ch .own{
+  margin-top:auto; width:calc(100% + 14px); margin-left:-7px;
+  background:#eef1f5; color:#64748b; font-size:11px; font-weight:400; text-align:center;
+  padding:3px 4px; border-top:1px solid var(--line); cursor:pointer; min-height:20px;
+}
+#colHead .ch .own:last-child{margin-bottom:-7px;}
+#colHead .ch .own.pg{margin-top:0; background:#f4f6f9; border-top:1px dashed var(--line);}
+#colHead .ch .own:hover{background:#e2e8f0;}
+#colHead .ch .cbtn{
+  font-size:11px; line-height:1; padding:2px 4px; border-radius:3px; border:1px solid var(--line-strong);
+  background:#fff; color:#475569; cursor:pointer;
+}
+#colHead .ch .cbtn:hover{background:var(--accent); color:#fff; border-color:var(--accent);}
+#colHead .ch input{
+  width:100%; font-family:inherit; font-size:12px; font-weight:700; border:1px solid var(--accent);
+  border-radius:3px; padding:2px 3px;
+}
+/* date rail */
+#rail{
+  position:sticky; left:0; display:inline-block; vertical-align:top;
+  width:var(--rail-w); z-index:20;
+  border-right:2px solid var(--line-strong); background:var(--paper);
+}
+.rday{
+  height:var(--row-h); display:flex; align-items:center; gap:6px; padding:0 6px;
+  font-variant-numeric:tabular-nums; border-bottom:1px solid #f1f5f9; font-size:12px;
+}
+.rday .wd{color:var(--ink-soft); font-size:11px;}
+.rday.off{background:var(--dayoff-solid);}
+.rday.hol .wd{color:#b45309; font-weight:700;}
+.rday.m1{border-top:2px solid var(--line-strong);}
+/* grid */
+#grid{position:absolute; top:0; left:var(--rail-w); width:max-content;}
+.gcol{position:absolute; top:0; bottom:0; border-right:1px solid var(--line); width:var(--col-w);}
+.gline{position:absolute; left:0; right:0; height:1px; background:#f6f7f9;}
+.gline.m1{background:var(--line-strong); height:2px;}
+/* dayoff stripes above blocks */
+.stripe{position:absolute; left:0; pointer-events:none; z-index:12;}
+.stripe.off{background:var(--dayoff);}
+.stripe.hol{background:var(--holiday);}
+/* 休日帯の下層(ブロックの下・空きマスはExcelと同じソリッド色になる) v2.12.0 */
+.stripe.under{background:var(--dayoff-solid); z-index:4;}
+.stripe .hname{
+  position:absolute; right:4px; top:2px; font-size:11px; color:#92400e; pointer-events:none;
+}
+/* task blocks */
+.blk{
+  position:absolute; border-radius:4px; border:1px solid rgba(0,0,0,.22);
+  padding:2px 5px; font-size:11.5px; line-height:1.35; overflow:hidden; cursor:grab;
+  z-index:10; user-select:none; -webkit-user-select:none; touch-action:none;
+  transition:box-shadow .12s;
+  display:flex; align-items:center; justify-content:center; text-align:center;
+}
+.blk .nm{width:100%; pointer-events:none; overflow:hidden;
+  display:-webkit-box; -webkit-box-orient:vertical; line-height:16px;
+  white-space:normal; overflow-wrap:anywhere; word-break:break-word;}
+.blk.bold .nm{font-weight:700;}
+.blk.pinned{border-style:dashed; border-width:1.5px;}
+.blk .pin{position:absolute; top:1px; right:2px; font-size:9px; pointer-events:none;}
+.blk.sel{box-shadow:0 0 0 2px var(--accent), 0 4px 10px rgba(0,0,0,.18); z-index:15;}
+.blk.warn{box-shadow:0 0 0 2px var(--danger); }
+.blk.sel.warn{box-shadow:0 0 0 2px var(--danger), 0 0 0 4px var(--accent);}
+.blk.dragging{opacity:.85; cursor:grabbing; z-index:40; box-shadow:0 8px 20px rgba(0,0,0,.3);}
+.blk.cascaded{animation:pulse .7s ease-out;}
+@keyframes pulse{0%{box-shadow:0 0 0 3px var(--accent);}100%{box-shadow:0 0 0 0 rgba(15,118,110,0);}}
+.blk .hz{position:absolute; left:0; right:0; height:7px; cursor:ns-resize;}
+.blk .hz.top{top:-2px;} .blk .hz.bot{bottom:-2px;}
+.blk .hx{position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize;}
+.blk .hx.left{left:-2px;} .blk .hx.right{right:-2px;}
+.evchip{
+  position:absolute; z-index:11; font-size:11px; background:#fef3c7; border:1px solid #f59e0b;
+  border-radius:3px; padding:1px 4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
+  cursor:pointer;
+}
+.evchip:hover{box-shadow:0 0 0 2px #f59e0b;}
+.collapseMark{position:absolute; left:0; right:0; height:6px; z-index:14; cursor:pointer;
+  background:repeating-linear-gradient(45deg,#94a3b8 0 6px,#e2e8f0 6px 12px); opacity:.85;}
+.collapseMark:hover{opacity:1; height:8px;}
+.evchip.sel{box-shadow:0 0 0 2px var(--accent);}
+#toolbar input[type=date]{
+  font-family:inherit; font-size:13px; border:1px solid #52606d; border-radius:4px;
+  padding:5px 7px; background:#ffffff; color:#1f2937; color-scheme:light; width:140px;
+}
+#toolbar input[type=date]:focus{outline:2px solid var(--accent); outline-offset:0;}
+/* drag badge */
+#badge{
+  position:fixed; z-index:100; background:var(--chrome); color:#fff; font-size:12.5px;
+  padding:4px 8px; border-radius:5px; pointer-events:none; display:none;
+  font-variant-numeric:tabular-nums; box-shadow:0 4px 12px rgba(0,0,0,.3);
+}
+#badge b{color:#5eead4;}
+/* side panel */
+#panel{
+  width:280px; background:#fff; border-left:1px solid var(--line-strong); padding:14px;
+  overflow:auto; display:flex; flex-direction:column; gap:10px;
+}
+#panel h2{font-size:13.5px; color:#334155;}
+#panel label{font-size:11px; color:var(--ink-soft); display:block; margin-bottom:2px;}
+#panel input[type=text], #panel input[type=date], #panel input[type=number], #panel textarea, #panel select{
+  width:100%; font-family:inherit; font-size:12.5px; border:1px solid var(--line-strong);
+  border-radius:4px; padding:6px 7px; background:#fff; color:var(--ink);
+}
+#panel textarea{resize:vertical; min-height:44px;}
+#panel #pName{min-height:64px; line-height:1.5;}
+#panel .row2{display:flex; gap:6px;} #panel .row2>div{flex:1; min-width:0;}
+#panel input[type=number]{height:31px;}  /* 開始/終了のdate入力と同じ高さに揃える */
+#panel .pbtn{background:var(--accent); color:#fff; padding:7px;}
+#panel .pbtn.gray{background:#64748b;}
+#panel .tcbtn{opacity:.55;} #panel .tcbtn.on{opacity:1; outline:2px solid var(--accent); outline-offset:1px;}
+#panel #tcW{background:#f8fafc; color:#111; border:1px solid #cbd5e1;} #panel #tcB{background:#1f2937;} #panel .pbtn.red{background:var(--danger);}
+#panel .meta{font-size:11px; color:var(--ink-soft);}
+#warnList{font-size:11px; color:var(--danger); line-height:1.5;}
+.swatches{display:flex; gap:4px; flex-wrap:wrap;}
+.sw{width:20px; height:20px; border-radius:4px; border:1px solid rgba(0,0,0,.2); cursor:pointer;}
+.sw.on{outline:2px solid var(--accent); outline-offset:1px;}
+#empty{color:var(--ink-soft); font-size:12.5px; line-height:1.75;}
+@media (max-width:760px){ #panel{display:none;} }
+@media (prefers-reduced-motion:reduce){ .blk.cascaded{animation:none;} .blk{transition:none;} }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <h1>制作スケジュール</h1><span class="sub" id="rangeLabel"></span>
+  <div class="tb-group"><span class="lbl">起点</span>
+    <input type="date" id="anchorDate">
+    <button id="rebaseB" title="最初の工程がこの日から始まるよう、シート内の全工程・イベントを営業日ベースで移動">ここへ移動</button>
+  </div>
+  <div class="tb-group"><span class="lbl">納品日</span>
+    <input type="date" id="dueDate">
+    <button id="rebaseEndB" title="最後の工程がこの日に終わるよう、シート内の全工程・イベントを営業日ベースで逆算移動(起点移動の逆)">ここへ逆算</button>
+  </div>
+  <div class="tb-group"><span class="lbl">ずらすと</span>
+    <button id="mAll" title="編集ブロックの元の終了日より後に始まる全工程がずれる">後続も動く</button>
+    <button id="mCol" class="on" title="同じセクション列の後続だけがずれる(既定)">同じ列だけ</button>
+    <button id="mOff" title="編集したブロックだけ動く">動かさない</button>
+  </div>
+  <div class="tb-group">
+    <button id="undoB" class="histbtn" title="Ctrl+Z">↩ 元に戻す</button>
+    <button id="redoB" class="histbtn" title="Ctrl+Y / Ctrl+Shift+Z">↪ やり直す</button>
+  </div>
+  <div class="tb-group">
+    <button id="newB" title="起点日から始まる空のシート(タブ)を追加">新規案件</button>
+    <button id="tmplB" title="標準テンプレート(和文・英文の2シート)を開く">テンプレから作成</button>
+    <button id="addB">＋工程</button>
+    <button id="exportB" title="色・結合つきのExcelファイルをダウンロード">Excel書き出し</button>
+    <button id="importB" title="Excelを読み込んで続きから編集(このアプリで書き出したExcel、過去形式のExcelどちらも可)">Excel読み込み</button>
+    <input type="file" id="importFile" accept=".xlsx" style="display:none">
+    <button id="resetB" title="白紙(今日開始)に戻す">初期化</button>
+    <button id="hiddenB" style="display:none" title="非表示にした工程の一覧(クリックで再表示)"></button>
+  </div>
+  <span id="saveState"></span>
+  <span class="sub" id="verLabel" style="opacity:.5; font-size:9px; margin-left:8px;"></span>
+</div>
+<div id="tabs"></div>
+<div id="wrap">
+  <div id="scroller">
+    <div id="colHead"></div>
+    <div id="canvas">
+      <div id="rail"></div>
+      <div id="grid"></div>
+      <div id="emptyGuide" style="display:none">
+        <div class="eg-card">
+          <div class="eg-icon">📅</div>
+          <div class="eg-title">スケジュールを作りましょう</div>
+          <div class="eg-body">
+            上の<b>「テンプレから作成」</b>で標準工程(和文・英文)を呼び出すか、<br>
+            カレンダーの<b>空きマスをダブルクリック</b>して工程を追加できます。<br>
+            既存のExcelがあれば<b>「Excel読み込み」</b>から取り込めます。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="panel">
+    <div id="empty"><div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:9px 11px;margin-bottom:10px;font-size:12.5px;line-height:1.6"><b>編集したら必ずExcel書き出しを。</b><br>ブラウザを閉じると編集内容は消えます。作業の続きは、書き出したExcelを読み込んで再開します。</div>ブロックをクリックすると編集できます。<br><br>
+      ・ドラッグ=移動(営業日にスナップ)<br>
+      ・上下端をドラッグ=期間の伸縮<br>
+      ・ドロップすると「連動」設定に応じて後続工程が<b>土日祝を除いた営業日数</b>で自動的にずれます<br>
+      ・<b>Ctrl(⌘)を押しながらドラッグで工程を複製</b>(既存の工程は一切動きません)<br>
+      ・色変更時に<b>「同じ色の工程もまとめて変更」</b>にチェックすると、このシート内の同色工程を一括変更<br>
+      ・同じ日に複数のイベントがある場合、Excel書き出しでは<b>1つのセルに改行で結合</b>されます(内容は消えません。件数の見え方だけ変わります)<br>
+      ・書き出したExcelは<b>見た目がデータのすべて</b>です(補助シートなし)。📌固定は工程名の頭の📌、太字は太字フォント、休日はグレー帯として保存され、読み込みでそのまま復元されます<br>
+      ・📌固定した工程は連動で動きません。移動の結果、固定工程と重なった場合は赤枠で警告します<br>
+      ・<b>空きマスをダブルクリック=工程を新規追加</b>、<b>選択中の工程はDeleteキーで削除</b>(↩で戻せます)<br>
+      ・<b>ブロックをすばやく2回クリック=工程名をすぐ編集</b>(右パネルの名前欄にフォーカスして全選択)<br>
+      ・<b>列見出しをダブルクリック=セクション名の変更</b>(カーソルを乗せると ⧉←/＋/⧉→/✕ で列のコピー・追加・削除)<br>
+      ・ブロックの<b>左右端ドラッグ=列方向に伸縮</b>、横ドラッグ=別セクションへ移動、右パネル「⧉複製」で右隣にコピー<br>
+      ・ブロックが重なった場合、<b>小さいブロックが自動で前面</b>に出ます(「前面へ/背面へ」で手動調整も可)。<b>重なりがあれば⚠警告</b>します<br>
+      ・イベントはクリックで編集、イベント列の空きマスをダブルクリックで追加<br>
+      ・<b>左の日付をクリック=休日の登録/解除、行の非表示</b>(「この日より前を非表示」で過去の日付を畳めます。縞のラインをクリック、またはツールバーの「👁非表示の行」から再表示。Excel書き出しでは本物の非表示行になります)<br>
+      ・「テンプレから作成」で標準テンプレート(和文・英文)から開始。日付は「起点」で案件の開始日へ一括移動できます<br>
+      ・<b>「納品日」に日付を入れて「ここへ逆算」</b>で、最後の工程がその日に終わるよう全体を逆算移動できます(起点移動の逆。納品日が土日祝なら直前の営業日に繰り上げ)<br>
+      ・編集パネルの<b>「営業日数」に日数を入力すると終了日を自動計算</b>します(終了日を直接変えたときと同じく後続工程も連動)<br>
+      ・<b>保存はExcel書き出しに一本化</b>。編集したら「Excel書き出し」で手元に保存し、続きはそのExcelを「Excel読み込み」で開いて再開します(Excelが常に最新の正)
+    </div>
+    <div id="editor" style="display:none">
+      <h2 id="pTitle">工程の編集</h2>
+      <div><label>工程名</label><textarea id="pName" rows="3"></textarea></div>
+      <div class="row2">
+        <div><label>開始</label><input type="date" id="pStart"></div>
+        <div><label>終了</label><input type="date" id="pEnd"></div>
+      </div>
+      <div class="row2" style="align-items:end;">
+        <div><label>営業日数(土日祝除く)</label><input type="number" id="pBdIn" min="1" step="1" title="入力すると開始日から営業日数ぶんの終了日を自動計算"></div>
+        <div class="meta" id="pBd" style="padding-bottom:6px;">→ 終了日を自動計算</div>
+      </div>
+      <div><label>セクション</label><select id="pSec"></select></div>
+      <div><label>色</label><div class="swatches" id="pColors"></div>
+        <div class="row2" style="margin-top:4px; align-items:center;">
+          <input type="color" id="pColorPick" title="好きな色を選ぶ" style="width:100%; height:26px; border:1px solid var(--line); border-radius:4px; padding:1px; background:#fff; cursor:pointer;">
+        </div>
+        <label class="meta" style="display:flex; gap:6px; align-items:center; cursor:pointer; margin-top:4px; user-select:none;">
+          <input type="checkbox" id="pColorAll" style="width:auto; margin:0;">同じ色の工程もまとめて変更(このシート内)
+        </label>
+      </div>
+      <div><label>文字色</label>
+        <div class="row2" style="align-items:center;">
+          <button class="pbtn gray tcbtn" id="tcB">黒</button>
+          <button class="pbtn gray tcbtn" id="tcW">白</button>
+          <button class="pbtn gray tcbtn" id="pBold" title="工程名を太字にする(Excelでも太字で保存)"><b>B</b> 太字</button>
+          <input type="color" id="pTcPick" title="好きな文字色を選ぶ" style="flex:0 0 44px; height:26px; border:1px solid var(--line); border-radius:4px; padding:1px; background:#fff; cursor:pointer;">
+        </div>
+      </div>
+      <div class="row2">
+        <button class="pbtn gray" id="pPin">📌 固定する</button>
+        <button class="pbtn gray" id="pDup" title="右隣の列に同じ日程で複製">⧉ 複製</button>
+      </div>
+      <div class="row2">
+        <button class="pbtn gray" id="pFront" title="重なっているブロックより前に表示">⬆ 前面へ</button>
+        <button class="pbtn gray" id="pBack" title="重なっているブロックより後ろに表示">⬇ 背面へ</button>
+      </div>
+      <button class="pbtn red" id="pDel">削除</button>
+      <button class="pbtn" id="pClose">閉じる</button>
+      <div id="warnList"></div>
+    </div>
+    <div id="evEditor" style="display:none">
+      <h2>イベントの編集(固定日程)</h2>
+      <div><label>内容</label><textarea id="eText"></textarea></div>
+      <div><label>日付</label><input type="date" id="eDate"></div>
+      <div class="row2">
+        <button class="pbtn red" id="eDel">削除</button>
+        <button class="pbtn" id="eClose">閉じる</button>
+      </div>
+      <div class="meta">イベントは連動シフトでは動きません(決算発表・クライアント休業など)。イベント列の空きマスをダブルクリックで追加できます。<b>改行は使えません</b>(同じ日に複数のイベントを別々に登録できます)。</div>
+    </div>
+  </div>
+</div>
+<div id="badge"></div>
+<script>
+const SELF_HTML="<!DOCTYPE html>\n"+document.documentElement.outerHTML;
+const APP_VERSION="v2.13.0 (2026-08-15)";
+const DATA = /*DATA_START*/{"sections": ["表紙・冒頭", "セクション1", "セクション2", "セクション3", "セクション4", "セクション5", "巻末・その他"], "tasks": [], "events": [], "holidays": {"2025-01-01": "元日", "2025-01-13": "成人の日", "2025-02-11": "建国記念の日", "2025-02-23": "天皇誕生日", "2025-02-24": "天皇誕生日 振替休日", "2025-03-20": "春分の日", "2025-04-29": "昭和の日", "2025-05-03": "憲法記念日", "2025-05-04": "みどりの日", "2025-05-05": "こどもの日", "2025-05-06": "みどりの日 振替休日", "2025-07-21": "海の日", "2025-08-11": "山の日", "2025-09-15": "敬老の日", "2025-09-23": "秋分の日", "2025-10-13": "スポーツの日", "2025-11-03": "文化の日", "2025-11-23": "勤労感謝の日", "2025-11-24": "勤労感謝の日 振替休日", "2026-01-01": "元日", "2026-01-12": "成人の日", "2026-02-11": "建国記念の日", "2026-02-23": "天皇誕生日", "2026-03-20": "春分の日", "2026-04-29": "昭和の日", "2026-05-03": "憲法記念日", "2026-05-04": "みどりの日", "2026-05-05": "こどもの日", "2026-05-06": "憲法記念日 振替休日", "2026-07-20": "海の日", "2026-08-11": "山の日", "2026-09-21": "敬老の日", "2026-09-22": "国民の休日", "2026-09-23": "秋分の日", "2026-10-12": "スポーツの日", "2026-11-03": "文化の日", "2026-11-23": "勤労感謝の日", "2027-01-01": "元日", "2027-01-11": "成人の日", "2027-02-11": "建国記念の日", "2027-02-23": "天皇誕生日", "2027-03-21": "春分の日", "2027-03-22": "春分の日 振替休日", "2027-04-29": "昭和の日", "2027-05-03": "憲法記念日", "2027-05-04": "みどりの日", "2027-05-05": "こどもの日", "2027-07-19": "海の日", "2027-08-11": "山の日", "2027-09-20": "敬老の日", "2027-09-23": "秋分の日", "2027-10-11": "スポーツの日", "2027-11-03": "文化の日", "2027-11-23": "勤労感謝の日", "2028-01-01": "元日", "2028-01-10": "成人の日", "2028-02-11": "建国記念の日", "2028-02-23": "天皇誕生日", "2028-03-20": "春分の日", "2028-04-29": "昭和の日", "2028-05-03": "憲法記念日", "2028-05-04": "みどりの日", "2028-05-05": "こどもの日", "2028-07-17": "海の日", "2028-08-11": "山の日", "2028-09-18": "敬老の日", "2028-09-22": "秋分の日", "2028-10-09": "スポーツの日", "2028-11-03": "文化の日", "2028-11-23": "勤労感謝の日", "2029-01-01": "元日", "2029-01-08": "成人の日", "2029-02-11": "建国記念の日", "2029-02-12": "建国記念の日 振替休日", "2029-02-23": "天皇誕生日", "2029-03-20": "春分の日", "2029-04-29": "昭和の日", "2029-04-30": "昭和の日 振替休日", "2029-05-03": "憲法記念日", "2029-05-04": "みどりの日", "2029-05-05": "こどもの日", "2029-07-16": "海の日", "2029-08-11": "山の日", "2029-09-17": "敬老の日", "2029-09-23": "秋分の日", "2029-09-24": "秋分の日 振替休日", "2029-10-08": "スポーツの日", "2029-11-03": "文化の日", "2029-11-23": "勤労感謝の日", "2030-01-01": "元日", "2030-01-14": "成人の日", "2030-02-11": "建国記念の日", "2030-02-23": "天皇誕生日", "2030-03-20": "春分の日", "2030-04-29": "昭和の日", "2030-05-03": "憲法記念日", "2030-05-04": "みどりの日", "2030-05-05": "こどもの日", "2030-05-06": "こどもの日 振替休日", "2030-07-15": "海の日", "2030-08-11": "山の日", "2030-08-12": "山の日 振替休日", "2030-09-16": "敬老の日", "2030-09-23": "秋分の日", "2030-10-14": "スポーツの日", "2030-11-03": "文化の日", "2030-11-04": "文化の日 振替休日", "2030-11-23": "勤労感謝の日"}, "template": [{"name": "和文", "sections": ["表紙/パーパス", "【セクション1】社長メッセージ", "【セクション2】価値創造モデル…", "【セクション3】CFOメッセージ", "【セクション3】重点戦略進捗", "【セクション3】財務・非財務目標", "【セクション4】特集XX対談", "【セクション5-1】テクノロジー（CTO)", "【セクション5-2】役員集合カット…", "【セクション5-2】ガバナンス", "10年ハイライト/参画・外部評価…"], "tasks": [{"id": "t27", "col": 1, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-03-03", "end": "2027-03-12", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t41", "col": 2, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-03-03", "end": "2027-03-12", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t54", "col": 3, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-03-03", "end": "2027-03-26", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t76", "col": 5, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-03-03", "end": "2027-03-26", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t84", "col": 6, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-03-03", "end": "2027-03-26", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t97", "col": 7, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-03-03", "end": "2027-03-26", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t110", "col": 8, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-03-03", "end": "2027-03-26", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t28", "col": 1, "colSpan": 1, "name": "ドラフト版取材メモご提出", "start": "2027-03-18", "end": "2027-03-18", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t42", "col": 2, "colSpan": 1, "name": "ドラフト版取材メモご提出", "start": "2027-03-18", "end": "2027-03-18", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t55", "col": 3, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-04-07", "end": "2027-04-09", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t77", "col": 5, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-04-07", "end": "2027-04-09", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t85", "col": 6, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-04-07", "end": "2027-04-09", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t98", "col": 7, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-04-07", "end": "2027-04-09", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t111", "col": 8, "colSpan": 1, "name": "企画すり合わせ期間", "start": "2027-04-07", "end": "2027-04-09", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t2", "col": 0, "colSpan": 11, "name": "V5企画お打ち合わせ", "start": "2027-04-14", "end": "2027-04-14", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t4", "col": 0, "colSpan": 11, "name": "V6企画ご提出", "start": "2027-04-19", "end": "2027-04-19", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t29", "col": 1, "colSpan": 1, "name": "取材メモご提出\n（社長）", "start": "2027-05-07", "end": "2027-05-07", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t56", "col": 3, "colSpan": 1, "name": "取材メモご提出\n（CFO）", "start": "2027-05-07", "end": "2027-05-07", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t30", "col": 1, "colSpan": 1, "name": "社長取材メモご確認", "start": "2027-05-10", "end": "2027-05-10", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t43", "col": 2, "colSpan": 1, "name": "取材メモご提出\n（CSSO）", "start": "2027-05-10", "end": "2027-05-10", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t57", "col": 3, "colSpan": 1, "name": "CFO取材メモご確認", "start": "2027-05-10", "end": "2027-05-10", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t86", "col": 6, "colSpan": 1, "name": "取材メモご提出\n（副社長）（事例）", "start": "2027-05-10", "end": "2027-05-10", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t99", "col": 7, "colSpan": 1, "name": "取材メモご提出\n（CTO・CHRO・CDXO・社員）", "start": "2027-05-10", "end": "2027-05-10", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t112", "col": 8, "colSpan": 1, "name": "取材要点・メモご提出\n（社外取）", "start": "2027-05-10", "end": "2027-05-10", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t31", "col": 1, "colSpan": 1, "name": "取材メモご確認\n→お戻し\n→調整", "start": "2027-05-12", "end": "2027-05-14", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t44", "col": 2, "colSpan": 1, "name": "取材メモご確認\n→お戻し\n→調整", "start": "2027-05-12", "end": "2027-05-14", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t58", "col": 3, "colSpan": 1, "name": "取材メモご確認\n→お戻し\n→調整", "start": "2027-05-12", "end": "2027-05-14", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t68", "col": 4, "colSpan": 1, "name": "重点戦略\n原稿作成", "start": "2027-05-12", "end": "2027-05-14", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t87", "col": 6, "colSpan": 1, "name": "取材メモご確認\n→お戻し\n→調整", "start": "2027-05-12", "end": "2027-05-14", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t100", "col": 7, "colSpan": 1, "name": "取材メモご確認\n→お戻し\n→調整", "start": "2027-05-12", "end": "2027-05-14", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t113", "col": 8, "colSpan": 1, "name": "社外取\n取材メモお戻し\n→調整\n→確定", "start": "2027-05-12", "end": "2027-05-14", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t32", "col": 1, "colSpan": 1, "name": "取材メモお戻し\n→調整\n→確定", "start": "2027-05-19", "end": "2027-05-21", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t45", "col": 2, "colSpan": 1, "name": "取材メモご確認\n→お戻し\n→調整\n→確定", "start": "2027-05-19", "end": "2027-05-21", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t59", "col": 3, "colSpan": 1, "name": "取材メモご確認\n→お戻し\n→調整\n→確定", "start": "2027-05-19", "end": "2027-05-21", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t69", "col": 4, "colSpan": 1, "name": "重点戦略\n原稿作成\n→ご提出", "start": "2027-05-19", "end": "2027-05-21", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t78", "col": 5, "colSpan": 1, "name": "CFO・財務非財務TF以外\n第1ゲラ作成\n（テキストダミー）\n→ご提出", "start": "2027-05-19", "end": "2027-05-21", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t88", "col": 6, "colSpan": 1, "name": "取材メモご確認\n→お戻し\n→調整\n→確定", "start": "2027-05-19", "end": "2027-05-21", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t101", "col": 7, "colSpan": 1, "name": "取材メモご確認\n→お戻し\n→調整\n→確定", "start": "2027-05-19", "end": "2027-05-21", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t126", "col": 10, "colSpan": 1, "name": "第1ゲラ作成\n（テキストダミー）\n→ご提出", "start": "2027-05-19", "end": "2027-05-21", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t5", "col": 0, "colSpan": 1, "name": "第1ゲラ作成\n（変革の軌跡・\n編集方針は\nダミーテキスト）\n→ご提出", "start": "2027-05-26", "end": "2027-05-28", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t70", "col": 4, "colSpan": 1, "name": "重点戦略\n原稿ご確認", "start": "2027-05-26", "end": "2027-05-28", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t79", "col": 5, "colSpan": 1, "name": "CFO・財務非財務TF以外\n第1ゲラご確認", "start": "2027-05-26", "end": "2027-05-28", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t127", "col": 10, "colSpan": 1, "name": "第1ゲラご確認", "start": "2027-05-26", "end": "2027-05-28", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t33", "col": 1, "colSpan": 1, "name": "取材＆撮影", "start": "2027-05-27", "end": "2027-05-27", "color": "#335693", "pinned": false, "tc": "w", "bold": false}, {"id": "t46", "col": 2, "colSpan": 1, "name": "2030年ビジョン財務指標\n社長取材で確認", "start": "2027-05-27", "end": "2027-05-27", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t60", "col": 3, "colSpan": 1, "name": "取材＆撮影", "start": "2027-05-27", "end": "2027-05-27", "color": "#335693", "pinned": false, "tc": "w", "bold": false}, {"id": "t34", "col": 1, "colSpan": 1, "name": "原稿作成", "start": "2027-05-28", "end": "2027-06-04", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t61", "col": 3, "colSpan": 1, "name": "原稿作成", "start": "2027-05-28", "end": "2027-06-04", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t114", "col": 8, "colSpan": 1, "name": "撮影", "start": "2027-05-28", "end": "2027-05-28", "color": "#335693", "pinned": false, "tc": "w", "bold": false}, {"id": "t6", "col": 0, "colSpan": 1, "name": "第1ゲラご確認", "start": "2027-06-02", "end": "2027-06-04", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t47", "col": 2, "colSpan": 1, "name": "CSSO\n書面取材\nご回答", "start": "2027-06-02", "end": "2027-06-11", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t71", "col": 4, "colSpan": 1, "name": "重点戦略\n原稿ご確認→お戻し\n\n→適宜V更新\n→確定", "start": "2027-06-02", "end": "2027-06-04", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t80", "col": 5, "colSpan": 1, "name": "CFO・財務非財務TF以外\n第1ゲラお戻し\n\n（ゲラお戻しと同時）\nセグメント別事業概況\n原稿ご支給\n\n財務非財務TF\n原稿ご支給", "start": "2027-06-02", "end": "2027-06-04", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t102", "col": 7, "colSpan": 1, "name": "書面取材\nご回答\n（社員含む）", "start": "2027-06-02", "end": "2027-06-11", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t121", "col": 9, "colSpan": 1, "name": "原稿ご支給\n→適宜編集\n→確定", "start": "2027-06-02", "end": "2027-06-11", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t128", "col": 10, "colSpan": 1, "name": "第1ゲラご確認\n→お戻し\n（10年ハイライトコメント・\nステークホルダー\n原稿ご支給）", "start": "2027-06-02", "end": "2027-06-04", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t7", "col": 0, "colSpan": 1, "name": "第1ゲラご確認→\nお戻し\n（変革の軌跡・\n編集方針\n原稿ご支給）", "start": "2027-06-09", "end": "2027-06-11", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t35", "col": 1, "colSpan": 1, "name": "原稿作成\n→ご提出", "start": "2027-06-09", "end": "2027-06-10", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t62", "col": 3, "colSpan": 1, "name": "原稿作成\n→ご提出", "start": "2027-06-09", "end": "2027-06-11", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t72", "col": 4, "colSpan": 1, "name": "第1ゲラ作成\n→ご提出", "start": "2027-06-09", "end": "2027-06-11", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t81", "col": 5, "colSpan": 1, "name": "第1ゲラV2作成\n（本テキスト入り）\n→ご提出", "start": "2027-06-09", "end": "2027-06-11", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t89", "col": 6, "colSpan": 1, "name": "取材期間／\n書面ご回答", "start": "2027-06-09", "end": "2027-06-18", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t129", "col": 10, "colSpan": 1, "name": "第1ゲラV2作成\n（本テキスト入り）\n→ご提出", "start": "2027-06-09", "end": "2027-06-11", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t36", "col": 1, "colSpan": 1, "name": "原稿ご確認", "start": "2027-06-11", "end": "2027-06-11", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t37", "col": 1, "colSpan": 1, "name": "原稿ご確認\n→お戻し\n\n→適宜V更新", "start": "2027-06-16", "end": "2027-06-18", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t48", "col": 2, "colSpan": 1, "name": "原稿作成\n→ご提出\n（CSSO含む）", "start": "2027-06-16", "end": "2027-06-18", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t63", "col": 3, "colSpan": 1, "name": "原稿ご確認", "start": "2027-06-16", "end": "2027-06-18", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t73", "col": 4, "colSpan": 1, "name": "第1ゲラご確認", "start": "2027-06-16", "end": "2027-06-18", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t82", "col": 5, "colSpan": 1, "name": "第1ゲラV2ご確認", "start": "2027-06-16", "end": "2027-06-18", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t103", "col": 7, "colSpan": 1, "name": "原稿作成\n→ご提出", "start": "2027-06-16", "end": "2027-06-18", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t122", "col": 9, "colSpan": 1, "name": "第1ゲラ作成\n→ご提出", "start": "2027-06-16", "end": "2027-06-18", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t130", "col": 10, "colSpan": 1, "name": "第1ゲラV2ご確認", "start": "2027-06-16", "end": "2027-06-18", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t115", "col": 8, "colSpan": 1, "name": "撮影\n社外取締役取材？", "start": "2027-06-18", "end": "2027-06-18", "color": "#335693", "pinned": false, "tc": "w", "bold": false}, {"id": "t38", "col": 1, "colSpan": 1, "name": "原稿確定", "start": "2027-06-23", "end": "2027-06-24", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t49", "col": 2, "colSpan": 1, "name": "原稿ご確認", "start": "2027-06-23", "end": "2027-06-25", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t64", "col": 3, "colSpan": 1, "name": "原稿ご確認\n→お戻し\n\n→適宜V更新\n→確定", "start": "2027-06-23", "end": "2027-06-25", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t74", "col": 4, "colSpan": 1, "name": "第1ゲラご確認\n→お戻し", "start": "2027-06-23", "end": "2027-06-25", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t83", "col": 5, "colSpan": 1, "name": "第1ゲラV2ご確認\n（本テキスト入り）\n→お戻し", "start": "2027-06-23", "end": "2027-06-25", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t90", "col": 6, "colSpan": 1, "name": "原稿作成", "start": "2027-06-23", "end": "2027-06-25", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t104", "col": 7, "colSpan": 1, "name": "原稿ご確認", "start": "2027-06-23", "end": "2027-06-25", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t116", "col": 8, "colSpan": 1, "name": "集合カット撮影\n社外取締役取材", "start": "2027-06-23", "end": "2027-06-23", "color": "#335693", "pinned": false, "tc": "w", "bold": false}, {"id": "t123", "col": 9, "colSpan": 1, "name": "第1ゲラご確認", "start": "2027-06-23", "end": "2027-06-25", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t131", "col": 10, "colSpan": 1, "name": "第1ゲラV2ご確認\n（本テキスト入り）\n→お戻し", "start": "2027-06-23", "end": "2027-06-25", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t117", "col": 8, "colSpan": 1, "name": "社外取締役\n原稿作成", "start": "2027-06-24", "end": "2027-06-25", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t39", "col": 1, "colSpan": 1, "name": "第1ゲラご確認", "start": "2027-06-30", "end": "2027-07-02", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t50", "col": 2, "colSpan": 1, "name": "原稿ご確認\n→お戻し\n（CSSO含む）\n\n→適宜V更新\n→確定", "start": "2027-06-30", "end": "2027-07-02", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t65", "col": 3, "colSpan": 1, "name": "第1ゲラ作成\n→ご提出", "start": "2027-06-30", "end": "2027-07-02", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t91", "col": 6, "colSpan": 1, "name": "原稿作成\n→ご提出", "start": "2027-06-30", "end": "2027-07-02", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t105", "col": 7, "colSpan": 1, "name": "原稿ご確認\n→お戻し\n\n→適宜V更新\n→確定", "start": "2027-06-30", "end": "2027-07-02", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t118", "col": 8, "colSpan": 1, "name": "【エッジ】\n原稿作成\n→ご提出\n\n【XX様】\nガバナンス原稿ご支給", "start": "2027-06-30", "end": "2027-07-02", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t124", "col": 9, "colSpan": 1, "name": "第1ゲラご確認\n→お戻し", "start": "2027-06-30", "end": "2027-07-02", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t40", "col": 1, "colSpan": 1, "name": "第1ゲラご確認\n→お戻し", "start": "2027-07-07", "end": "2027-07-09", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t51", "col": 2, "colSpan": 1, "name": "第1ゲラ作成\n→ご提出", "start": "2027-07-07", "end": "2027-07-09", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t66", "col": 3, "colSpan": 1, "name": "第1ゲラご確認", "start": "2027-07-07", "end": "2027-07-09", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t92", "col": 6, "colSpan": 1, "name": "原稿ご確認", "start": "2027-07-07", "end": "2027-07-09", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t106", "col": 7, "colSpan": 1, "name": "第1ゲラ作成\n→ご提出", "start": "2027-07-07", "end": "2027-07-09", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t119", "col": 8, "colSpan": 1, "name": "第1ゲラ作成\n（社外取締役は\n原稿ママ）\n→ご提出", "start": "2027-07-07", "end": "2027-07-09", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t8", "col": 0, "colSpan": 2, "name": "第2ゲラ作成", "start": "2027-07-14", "end": "2027-07-16", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t52", "col": 2, "colSpan": 1, "name": "第1ゲラご確認", "start": "2027-07-14", "end": "2027-07-16", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t67", "col": 3, "colSpan": 1, "name": "第1ゲラご確認\n→お戻し", "start": "2027-07-14", "end": "2027-07-16", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t75", "col": 4, "colSpan": 2, "name": "第2ゲラ作成", "start": "2027-07-14", "end": "2027-07-16", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t93", "col": 6, "colSpan": 1, "name": "原稿ご確認\n→お戻し\n\n→適宜V更新\n→確定", "start": "2027-07-14", "end": "2027-07-16", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t107", "col": 7, "colSpan": 1, "name": "第1ゲラご確認", "start": "2027-07-14", "end": "2027-07-16", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t120", "col": 8, "colSpan": 1, "name": "第1ゲラご確認\n→お戻し\n\n社外取締役\n原稿お戻し", "start": "2027-07-14", "end": "2027-07-16", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t125", "col": 9, "colSpan": 2, "name": "第2ゲラ作成", "start": "2027-07-14", "end": "2027-07-16", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t53", "col": 2, "colSpan": 1, "name": "第1ゲラご確認\n→お戻し", "start": "2027-07-22", "end": "2027-07-23", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t94", "col": 6, "colSpan": 1, "name": "第1ゲラ作成\n→ご提出", "start": "2027-07-22", "end": "2027-07-23", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t108", "col": 7, "colSpan": 1, "name": "第1ゲラご確認\n→お戻し", "start": "2027-07-22", "end": "2027-07-23", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t9", "col": 0, "colSpan": 6, "name": "第2ゲラ作成", "start": "2027-07-28", "end": "2027-07-30", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t95", "col": 6, "colSpan": 1, "name": "第1ゲラご確認\n→お戻し", "start": "2027-07-28", "end": "2027-07-30", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t109", "col": 7, "colSpan": 4, "name": "第2ゲラ作成", "start": "2027-07-28", "end": "2027-07-30", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t96", "col": 6, "colSpan": 1, "name": "第2ゲラ作成", "start": "2027-08-04", "end": "2027-08-05", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t10", "col": 0, "colSpan": 11, "name": "第2ゲラご提出→第1回校正スタート", "start": "2027-08-06", "end": "2027-08-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t11", "col": 0, "colSpan": 11, "name": "第1回校正", "start": "2027-08-09", "end": "2027-08-13", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t12", "col": 0, "colSpan": 11, "name": "第1回校正結果ご報告", "start": "2027-08-16", "end": "2027-08-16", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t13", "col": 0, "colSpan": 11, "name": "第2ゲラご確認→お戻し（第１回校正結果取捨選択含む）", "start": "2027-08-18", "end": "2027-08-20", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t14", "col": 0, "colSpan": 11, "name": "第3ゲラ作成", "start": "2027-08-23", "end": "2027-08-23", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t15", "col": 0, "colSpan": 11, "name": "第3ゲラご提出→第2回校正開始", "start": "2027-08-25", "end": "2027-08-25", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t16", "col": 0, "colSpan": 11, "name": "第2回校正", "start": "2027-08-26", "end": "2027-09-01", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t17", "col": 0, "colSpan": 11, "name": "第2回校正結果ご報告", "start": "2027-09-02", "end": "2027-09-02", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t18", "col": 0, "colSpan": 11, "name": "第3ゲラお戻し（第2回校正結果取捨選択含む）", "start": "2027-09-03", "end": "2027-09-03", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t19", "col": 0, "colSpan": 11, "name": "ゲラ修正作業", "start": "2027-09-06", "end": "2027-09-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t20", "col": 0, "colSpan": 11, "name": "最終ゲラご提出", "start": "2027-09-08", "end": "2027-09-08", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t21", "col": 0, "colSpan": 11, "name": "最終ゲラお戻し", "start": "2027-09-09", "end": "2027-09-09", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t22", "col": 0, "colSpan": 11, "name": "修正反映最終確認→実質校了", "start": "2027-09-10", "end": "2027-09-10", "color": "#C00000", "pinned": false, "tc": "w", "bold": true}, {"id": "t23", "col": 0, "colSpan": 11, "name": "エッジリンク設定作業", "start": "2027-09-27", "end": "2027-09-27", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t24", "col": 0, "colSpan": 11, "name": "エッジ最終検証→ご提出", "start": "2027-09-28", "end": "2027-09-28", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t25", "col": 0, "colSpan": 11, "name": "XXX様最終検証→本校了", "start": "2027-09-29", "end": "2027-09-29", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": true}, {"id": "t26", "col": 0, "colSpan": 11, "name": "和文版ご納品", "start": "2027-09-30", "end": "2027-09-30", "color": "#C00000", "pinned": false, "tc": "w", "bold": true}], "events": [{"date": "2027-02-27", "text": "第2回お打合せ"}, {"date": "2027-03-18", "text": "第3回お打合せ"}, {"date": "2027-03-28", "text": "決算発表"}, {"date": "2027-04-14", "text": "できればこの週までにデザインお打ち合わせ"}, {"date": "2027-04-24", "text": "決算発表"}, {"date": "2027-04-28", "text": "XXX様休業"}, {"date": "2027-05-12", "text": "経営幹部撮影ロケハン"}, {"date": "2027-05-19", "text": "第1ゲラのご確認時にVIチェック同時進行、ゲラお戻し時に文字修正とまとめてご指示（以降同）"}, {"date": "2027-06-02", "text": "招集通知開示？"}, {"date": "2027-06-23", "text": "株主総会・有報開示"}, {"date": "2027-07-24", "text": "１Q決算発表？"}], "owners": ["IR／Sus", "IR／Sus", "IR／Sus", "IR", "IR", "IR／Sus", "IR", "IR／Sus", "IR／Sus", "Sus", "IR／Sus"]}, {"name": "英文", "sections": ["表紙/パーパス", "【セクション1】社長メッセージ", "【セクション2】価値創造モデル…", "【セクション3】CFOメッセージ", "【セクション3】重点戦略進捗", "【セクション3】財務・非財務目標", "【セクション4】特集XX対談", "【セクション5-1】テクノロジー（CTO)", "【セクション5-2】役員集合カット…", "【セクション5-2】ガバナンス", "10年ハイライト/参画・外部評価…"], "tasks": [{"id": "t190", "col": 5, "colSpan": 1, "name": "和文原稿ご支給", "start": "2027-06-07", "end": "2027-06-07", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t218", "col": 10, "colSpan": 1, "name": "和文原稿ご支給", "start": "2027-06-07", "end": "2027-06-07", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t191", "col": 5, "colSpan": 1, "name": "英訳\n→ 原稿ご提出", "start": "2027-06-09", "end": "2027-06-11", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t219", "col": 10, "colSpan": 1, "name": "10年ハイライト・\nステークホルダー\n英訳\n→ 原稿ご提出", "start": "2027-06-09", "end": "2027-06-11", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t143", "col": 0, "colSpan": 1, "name": "和文確定", "start": "2027-06-14", "end": "2027-06-14", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t192", "col": 5, "colSpan": 1, "name": "英文原稿ご確認\n→お戻し", "start": "2027-06-16", "end": "2027-06-25", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t220", "col": 10, "colSpan": 1, "name": "英文原稿ご確認\n→お戻し", "start": "2027-06-16", "end": "2027-06-25", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t144", "col": 0, "colSpan": 1, "name": "編集方針・\n変革の軌跡\n英訳\n→ 原稿ご提出", "start": "2027-06-23", "end": "2027-06-25", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t184", "col": 4, "colSpan": 1, "name": "和文確定", "start": "2027-06-28", "end": "2027-06-28", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t145", "col": 0, "colSpan": 1, "name": "英文原稿ご確認\n→お戻し", "start": "2027-06-30", "end": "2027-07-09", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t185", "col": 4, "colSpan": 1, "name": "英訳\n→ 原稿ご提出", "start": "2027-06-30", "end": "2027-07-02", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t207", "col": 8, "colSpan": 1, "name": "和文原稿ご支給", "start": "2027-07-05", "end": "2027-07-05", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t213", "col": 9, "colSpan": 1, "name": "和文確定", "start": "2027-07-05", "end": "2027-07-05", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t186", "col": 4, "colSpan": 1, "name": "英文原稿ご確認\n→お戻し", "start": "2027-07-07", "end": "2027-07-16", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t208", "col": 8, "colSpan": 1, "name": "社外取締役以外\n英訳\n→ 原稿ご提出", "start": "2027-07-07", "end": "2027-07-09", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t214", "col": 9, "colSpan": 1, "name": "英訳\n→ 原稿ご提出", "start": "2027-07-07", "end": "2027-07-09", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t166", "col": 1, "colSpan": 1, "name": "和文確定", "start": "2027-07-12", "end": "2027-07-12", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t167", "col": 1, "colSpan": 1, "name": "英訳\n→ 原稿ご提出", "start": "2027-07-14", "end": "2027-07-16", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t209", "col": 8, "colSpan": 1, "name": "社外取締役以外\n英文原稿ご確認", "start": "2027-07-14", "end": "2027-07-16", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t215", "col": 9, "colSpan": 1, "name": "英文原稿ご確認\n→お戻し", "start": "2027-07-14", "end": "2027-07-16", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t178", "col": 3, "colSpan": 1, "name": "和文確定", "start": "2027-07-20", "end": "2027-07-20", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t210", "col": 8, "colSpan": 1, "name": "座談会和文確定", "start": "2027-07-20", "end": "2027-07-20", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t168", "col": 1, "colSpan": 1, "name": "英文原稿ご確認", "start": "2027-07-22", "end": "2027-07-23", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t179", "col": 3, "colSpan": 1, "name": "英訳\n→ 原稿ご提出", "start": "2027-07-22", "end": "2027-07-23", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t211", "col": 8, "colSpan": 1, "name": "【Edge】\n社外取締役英訳\n→ 原稿ご提出\n\n【XX様】\n社外取締役以外\n英文原稿ご確認 \n→お戻し", "start": "2027-07-22", "end": "2027-07-23", "color": "#9DC3E6", "pinned": false, "tc": "b", "bold": false}, {"id": "t216", "col": 9, "colSpan": 1, "name": "英文原稿ご確認\n→ お戻し", "start": "2027-07-22", "end": "2027-07-23", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t173", "col": 2, "colSpan": 1, "name": "和文確定", "start": "2027-07-26", "end": "2027-07-26", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t201", "col": 7, "colSpan": 1, "name": "和文確定", "start": "2027-07-26", "end": "2027-07-26", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t169", "col": 1, "colSpan": 1, "name": "英文原稿ご確認\n→お戻し", "start": "2027-07-28", "end": "2027-07-30", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t174", "col": 2, "colSpan": 1, "name": "英訳\n→ 原稿ご提出", "start": "2027-07-28", "end": "2027-07-30", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t180", "col": 3, "colSpan": 1, "name": "英文原稿ご確認\n→お戻し", "start": "2027-07-28", "end": "2027-07-30", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t202", "col": 7, "colSpan": 1, "name": "英訳\n→ 原稿ご提出", "start": "2027-07-28", "end": "2027-07-30", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t212", "col": 8, "colSpan": 1, "name": "社外取締役\n英文原稿ご確認\n→お戻し", "start": "2027-07-28", "end": "2027-08-06", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t194", "col": 6, "colSpan": 1, "name": "和文確定", "start": "2027-08-02", "end": "2027-08-02", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t175", "col": 2, "colSpan": 1, "name": "英文原稿ご確認\n→お戻し", "start": "2027-08-04", "end": "2027-08-06", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t195", "col": 6, "colSpan": 1, "name": "英訳\n→ 原稿ご提出", "start": "2027-08-04", "end": "2027-08-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t203", "col": 7, "colSpan": 1, "name": "英文原稿ご確認\n→お戻し", "start": "2027-08-04", "end": "2027-08-06", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t146", "col": 0, "colSpan": 1, "name": "第1ゲラ作成", "start": "2027-08-06", "end": "2027-08-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t170", "col": 1, "colSpan": 1, "name": "第1ゲラ作成", "start": "2027-08-06", "end": "2027-08-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t181", "col": 3, "colSpan": 1, "name": "第1ゲラ作成", "start": "2027-08-06", "end": "2027-08-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t187", "col": 4, "colSpan": 1, "name": "第1ゲラ作成", "start": "2027-08-06", "end": "2027-08-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t193", "col": 5, "colSpan": 1, "name": "第1ゲラ作成", "start": "2027-08-06", "end": "2027-08-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t217", "col": 9, "colSpan": 1, "name": "第1ゲラ作成", "start": "2027-08-06", "end": "2027-08-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t221", "col": 10, "colSpan": 1, "name": "第1ゲラ作成", "start": "2027-08-06", "end": "2027-08-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t147", "col": 0, "colSpan": 6, "name": "第1ゲラ作成", "start": "2027-08-12", "end": "2027-08-20", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t196", "col": 6, "colSpan": 1, "name": "進行なし", "start": "2027-08-12", "end": "2027-08-13", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t204", "col": 7, "colSpan": 4, "name": "第1ゲラ作成", "start": "2027-08-12", "end": "2027-08-20", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t197", "col": 6, "colSpan": 1, "name": "英文原稿ご確認\n→お戻し", "start": "2027-08-18", "end": "2027-08-20", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t198", "col": 6, "colSpan": 1, "name": "第1ゲラ作成", "start": "2027-08-26", "end": "2027-08-27", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t148", "col": 0, "colSpan": 11, "name": "第1ゲラ作成→ご提出（全ページ）→第1回校正開始", "start": "2027-08-30", "end": "2027-08-30", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t149", "col": 0, "colSpan": 11, "name": "第1回校正", "start": "2027-08-31", "end": "2027-09-06", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t150", "col": 0, "colSpan": 11, "name": "第1回校正結果ご報告", "start": "2027-09-07", "end": "2027-09-07", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t151", "col": 0, "colSpan": 11, "name": "第1ゲラご確認→お戻し（第１回校正結果取捨選択含む）", "start": "2027-09-08", "end": "2027-09-10", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t152", "col": 0, "colSpan": 11, "name": "第2ゲラ作成", "start": "2027-09-13", "end": "2027-09-13", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t153", "col": 0, "colSpan": 11, "name": "第2ゲラ作成→ご提出", "start": "2027-09-16", "end": "2027-09-16", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t154", "col": 0, "colSpan": 11, "name": "第2回校正", "start": "2027-09-17", "end": "2027-09-24", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t155", "col": 0, "colSpan": 11, "name": "第2回校正結果ご報告", "start": "2027-09-27", "end": "2027-09-27", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t156", "col": 0, "colSpan": 11, "name": "第2ゲラご確認→お戻し（第2回校正結果取捨選択含む）", "start": "2027-09-28", "end": "2027-09-30", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t157", "col": 0, "colSpan": 11, "name": "最終ゲラご提出", "start": "2027-10-01", "end": "2027-10-01", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t158", "col": 0, "colSpan": 11, "name": "最終ゲラお戻し", "start": "2027-10-04", "end": "2027-10-04", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": false}, {"id": "t159", "col": 0, "colSpan": 11, "name": "修正反映最終確認→校了", "start": "2027-10-05", "end": "2027-10-05", "color": "#C00000", "pinned": false, "tc": "w", "bold": true}, {"id": "t160", "col": 0, "colSpan": 11, "name": "エッジリンク設定作業", "start": "2027-10-14", "end": "2027-10-14", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": false}, {"id": "t161", "col": 0, "colSpan": 11, "name": "エッジ最終検証→ご提出", "start": "2027-10-15", "end": "2027-10-15", "color": "#C6E0B4", "pinned": false, "tc": "b", "bold": true}, {"id": "t162", "col": 0, "colSpan": 11, "name": "XXX様最終検証→本校了", "start": "2027-10-18", "end": "2027-10-18", "color": "#F4B8B8", "pinned": false, "tc": "b", "bold": true}, {"id": "t163", "col": 0, "colSpan": 11, "name": "英文版ご納品", "start": "2027-10-19", "end": "2027-10-19", "color": "#C00000", "pinned": false, "tc": "w", "bold": true}], "events": [{"date": "2027-04-17", "text": "第2回お打合せ"}, {"date": "2027-05-06", "text": "第3回お打合せ"}, {"date": "2027-05-16", "text": "決算発表"}, {"date": "2027-06-02", "text": "招集通知開示？"}, {"date": "2027-06-25", "text": "株主総会・有報開示？"}, {"date": "2027-07-24", "text": "１Q決算発表？"}, {"date": "2027-08-04", "text": "和文版作業優先"}, {"date": "2027-08-05", "text": "和文版作業優先"}, {"date": "2027-08-21", "text": "和文版作業優先"}, {"date": "2027-08-22", "text": "和文版作業優先"}, {"date": "2027-08-25", "text": "和文版作業優先"}, {"date": "2027-09-01", "text": "24年XX副社長 原稿英文翻訳"}, {"date": "2027-09-08", "text": "和文版作業優先"}, {"date": "2027-09-10", "text": "24年IRデイ開催日"}, {"date": "2027-09-12", "text": "XX副社長ページ作成？"}, {"date": "2027-09-17", "text": "和文納品"}, {"date": "2027-10-06", "text": "英文アクセシビリティ対応作業（エッジ）"}, {"date": "2027-10-07", "text": "英文アクセシビリティ対応作業（エッジ）"}, {"date": "2027-10-08", "text": "英文アクセシビリティ対応作業（エッジ）"}, {"date": "2027-10-09", "text": "英文アクセシビリティ対応作業（エッジ）"}, {"date": "2027-10-10", "text": "英文アクセシビリティ対応作業（エッジ）"}], "owners": ["IR／Sus", "IR／Sus", "IR／Sus", "IR", "IR", "IR／Sus", "IR", "IR／Sus", "IR／Sus", "Sus", "IR／Sus"]}]}/*DATA_END*/;
+/* ================= 日付・営業日 ================= */
+const HOLIDAYS = DATA.holidays;
+let customHol = {};   // {date: 名称} 全シート共通のカスタム休日(当社/クライアント)
+const MS = 86400000;
+const toD = s => new Date(s + "T00:00:00Z");
+const iso = d => d.toISOString().slice(0,10);
+const addDays = (s,n)=>iso(new Date(toD(s).getTime()+n*MS));
+const dow = s => toD(s).getUTCDay();               // 0=日
+const isOff = s => dow(s)===0 || dow(s)===6 || HOLIDAYS[s]!==undefined || customHol[s]!==undefined;
+const WD = ["日","月","火","水","木","金","土"];
+function addBD(s,n){                                // n営業日進める(負も可)
+  let d=s; while(isOff(d)) d=addDays(d, n>=0?1:-1);
+  let step=0, dir=n>=0?1:-1, target=Math.abs(n);
+  while(step<target){ d=addDays(d,dir); if(!isOff(d)) step++; }
+  return d;
+}
+function countBD(a,b){ let n=0,d=a; while(d<=b){ if(!isOff(d))n++; d=addDays(d,1);} return n; }
+function bdIndex(s){ // 基準日からの営業日通し番号(差分計算用)
+  let n=0,d=CAL0; const t=s;
+  while(d<t){ if(!isOff(d))n++; d=addDays(d,1); }
+  return n;
+}
+function shiftSpanBD(t, delta){
+  const k = countBD(t.start, t.end);
+  const ns = addBD(t.start, delta);
+  return {start:ns, end:addBD(ns, Math.max(k-1,0))};
+}
+/* ================= 状態 ================= */
+let sections = DATA.sections.slice();
+let owners = sections.map(()=>"");   // セクションごとのメモ(自由項目。旧称: 主管。データキーは互換のためownersのまま)
+let pages  = sections.map(()=>"");   // セクションごとのページ数(自由入力・v2.9.0)
+let hiddenRows = [];                 // このシートで非表示にした行(日付範囲) [{start,end}]
+function isHiddenDate(d){ return hiddenRows.some(r=>r.start<=d && d<=r.end); }
+function normalizeHidden(){
+  hiddenRows.sort((a,b)=>a.start<b.start?-1:1);
+  const out=[];
+  for(const r of hiddenRows){
+    const m=out[out.length-1];
+    if(m && addDays(m.end,1)>=r.start){ if(r.end>m.end)m.end=r.end; }
+    else out.push({...r});
+  }
+  hiddenRows=out;
+}
+function hiddenRanges(){   // 表示用: 各範囲の日数つき
+  return hiddenRows.map(r=>({...r, days:Math.round((toD(r.end)-toD(r.start))/MS)+1}));
+}
+let tasks;        // {id,col,colSpan,name,start,end,color,pinned,bold}
+let events = DATA.events;
+let schedules=[]; let activeTab=0;   // [{name,sections,tasks,events}]
+function syncBack(){ if(schedules[activeTab]) schedules[activeTab]={name:schedules[activeTab].name, sections, owners, pages, tasks, events, hiddenRows}; }
+function loadTab(i){
+  activeTab=i;
+  const sc=schedules[i];
+  sections=sc.sections; tasks=sc.tasks; events=sc.events;
+  owners=(sc.owners&&sc.owners.length===sections.length)?sc.owners:sections.map(()=>"");
+  pages=(sc.pages&&sc.pages.length===sections.length)?sc.pages:sections.map(()=>"");
+  hiddenRows=sc.hiddenRows||[];
+  events.forEach(e=>{ if(/\r|\n/.test(e.text)) e.text=e.text.replace(/\s*\r?\n\s*/g," "); });  // 旧データの改行を1行化(v2.13.0)
+  undoStack=[]; redoStack=[]; syncUndoBtns();
+  buildCalendar(); render(); renderTabs(); closeEditor(); closeEventEditor();
+  if(window.__refreshRebaseInputs) window.__refreshRebaseInputs();   // 起点/納品日欄を現シートに合わせる
+}
+function renderTabs(){
+  const bar=document.getElementById("tabs");
+  bar.innerHTML="";
+  schedules.forEach((sc,i)=>{
+    const t=document.createElement("div");
+    t.className="tab"+(i===activeTab?" on":"");
+    const nm=document.createElement("span"); nm.textContent=sc.name; t.appendChild(nm);
+    const x=document.createElement("span"); x.className="tx"; x.textContent="✕";
+    x.title="このシートを閉じる";
+    x.onclick=(e)=>{e.stopPropagation();
+      if(schedules.length<=1){alert("最後の1シートは閉じられません");return;}
+      if(!confirm("シート「"+sc.name+"」を閉じます。よろしいですか?"))return;
+      syncBack(); schedules.splice(i,1);
+      loadTab(Math.max(0, i<=activeTab?activeTab-1:activeTab)); queueSave();
+    };
+    t.appendChild(x);
+    const startRename=()=>{
+      const curNm=t.querySelector("span")||nm;
+      if(t.querySelector("input"))return;            // 既に編集中
+      const inp=document.createElement("input"); inp.value=sc.name;
+      t.replaceChild(inp,curNm); inp.focus(); inp.select();
+      // 注意: scオブジェクト参照は自動保存のsyncBackで差し替えられて孤児になることがある。
+      // 必ず schedules[i] で書き込むこと(v2.6.1で修正したバグ)。
+      const fin=()=>{ let v=inp.value.trim();
+        if(v&&schedules[i]){
+          // 同名タブの禁止: 他タブと重複したらExcel同様に末尾へ連番を付ける(v2.7.1)
+          const others=new Set(schedules.filter((s,j)=>j!==i).map(s=>s.name));
+          if(others.has(v)){ const base=v; let n=2; while(others.has(base+" "+n))n++; v=base+" "+n; }
+          schedules[i].name=v;
+        }
+        renderTabs(); queueSave(); };
+      inp.onblur=fin; inp.onkeydown=e=>{
+        if(e.isComposing||e.keyCode===229)return;   // IME変換中のEnterは無視(確定操作)
+        if(e.key==="Enter")inp.blur(); if(e.key==="Escape"){inp.value=(schedules[i]||sc).name;inp.blur();}};
+    };
+    t.onclick=()=>{
+      // 自前ダブルクリック判定: タブ切り替えでDOMが作り直されても、同じタブへの
+      // 2回目のクリック(600ms以内)でリネームを開始する(実機でdblclickが成立しない対策)
+      const now=Date.now();
+      const lc=window.__tabLastClick;
+      window.__tabLastClick={i, time:now};
+      if(lc && lc.i===i && now-lc.time<600){ startRename(); return; }
+      if(i!==activeTab){ syncBack(); loadTab(i); queueSave(); }
+    };
+    t.ondblclick=startRename;
+    bar.appendChild(t);
+  });
+  const add=document.createElement("button"); add.id="tabAdd"; add.textContent="＋";
+  add.title="シートを追加(コピー元を選択)";
+  add.onclick=(ev)=>{ ev.stopPropagation(); showTabMenu(add); };
+  bar.appendChild(add);
+}
+let undoStack=[], redoStack=[];
+let mode="col";   // all | col | off(既定: 同列)
+let selId=null;
+const PALETTE=["#9DC3E6","#F4B8B8","#C6E0B4","#335693","#C00000","#FFF2CC"];
+const PALETTE_LABEL={"#9DC3E6":"水色: 当社とクライアント共同","#F4B8B8":"ピンク: クライアント作業",
+  "#C6E0B4":"きみどり: 当社作業","#335693":"濃青: 取材・撮影(白字推奨)",
+  "#C00000":"濃赤: 納品・校了(白字推奨)","#FFF2CC":"その他"};
+function initTasks(src){
+  return src.map((t,i)=>({id:"t"+i, col:t.col, colSpan:t.colSpan||1, name:t.name,
+    start:t.start, end:t.end, color:t.color||PALETTE[t.col%PALETTE.length],
+    pinned:false, bold:!!t.bold}));
+}
+/* カレンダー範囲 */
+let CAL0, CAL1, DAYS=[], ALLDAYS=[], ROWIDX={};
+let emptyStart=null;   // 空シート時の表示起点
+/* カレンダー範囲の計算(画面とExcel書き出しで必ずこの1関数を共用する)。
+   ここが乖離すると「非表示範囲の外側の行がExcelにだけ現れる」等の画面≠Excelバグになる(v2.7.1)。
+   範囲は工程+イベントのみから決める(非表示行・休日は画面同様に範囲を広げない)。 */
+function calRange(tks,evs){
+  let mn=null,mx=null;
+  for(const t of tks){ if(!mn||t.start<mn)mn=t.start; if(!mx||t.end>mx)mx=t.end; }
+  for(const e of evs){ if(!mn||e.date<mn)mn=e.date; if(!mx||e.date>mx)mx=e.date; }
+  if(!mn){ mn=emptyStart||iso(new Date()); mx=addDays(mn,270); }   // 空のとき
+  let c0=addDays(mn,-7); while(dow(c0)!==1) c0=addDays(c0,-1);
+  let c1=addDays(mx,45);
+  const six=addDays(mn,183);                 // 起点から約6か月は常に表示(納品日側から工程を置けるように)
+  if(c1<six) c1=six;
+  return {c0,c1,mn};
+}
+function buildCalendar(){
+  const rg=calRange(tasks,events);
+  CAL0=rg.c0; CAL1=rg.c1; const mn=rg.mn;
+  ALLDAYS=[]; DAYS=[]; ROWIDX={};
+  let d=CAL0;
+  while(d<=CAL1){
+    ALLDAYS.push(d);
+    if(!isHiddenDate(d)){ ROWIDX[d]=DAYS.length; DAYS.push(d); }
+    d=addDays(d,1);
+  }
+  const a=document.getElementById("anchorDate");
+  if(a && !a.value) a.value=mn;
+  const du=document.getElementById("dueDate");
+  if(du && !du.value && tasks.length){
+    let mx=null; for(const t of tasks){ if(!mx||t.end>mx)mx=t.end; }
+    du.value=mx;
+  }
+}
+function bdSigned(a,b){          // 営業日a→bの符号つき営業日数
+  a=addBD(a,0); b=addBD(b,0);
+  if(a===b)return 0;
+  let n=0,d=a;
+  if(b>a){ while(d<b){ d=addDays(d,1); if(!isOff(d))n++; } return n; }
+  while(d>b){ d=addDays(d,-1); if(!isOff(d))n--; }
+  return n;
+}
+function shiftAllBD(delta){      // シート内の全工程・イベントをΔ営業日移動(📌固定も含む)
+  for(const t of tasks){ const ns=shiftSpanBD(t,delta); t.start=ns.start; t.end=ns.end; }
+  for(const e of events){ e.date=addBD(e.date,delta); }
+}
+function rebaseTo(newStart){     // 最初の工程がnewStartから始まるよう全体移動
+  if(!tasks.length){ emptyStart=newStart; buildCalendar(); render(); return 0; }
+  let mn=null; for(const t of tasks){ if(!mn||t.start<mn)mn=t.start; }
+  const delta=bdSigned(mn, newStart);
+  if(delta===0)return 0;
+  pushUndo(); shiftAllBD(delta);
+  buildCalendar(); render(); queueSave();
+  return delta;
+}
+function rebaseEndTo(newEnd){    // 最後の工程がnewEndに終わるよう全体を逆算移動(起点移動の逆・v2.8.0)
+  if(!tasks.length)return null;
+  let mx=null; for(const t of tasks){ if(!mx||t.end>mx)mx=t.end; }
+  let ne=newEnd; while(isOff(ne)) ne=addDays(ne,-1);   // 納品日が土日祝なら直前の営業日に繰り上げ(締切なので後ろに倒さない)
+  const delta=bdSigned(mx, ne);
+  if(delta===0)return 0;
+  pushUndo(); shiftAllBD(delta);
+  buildCalendar(); render(); queueSave();
+  return delta;
+}
+const rowOf = s => (ROWIDX[s]!==undefined ? ROWIDX[s] : -1);
+function visSpan(a,b){   // [a,b]内の可視行の先頭/末尾インデックス(なければnull)
+  let i1=-1,i2=-1,d=a;
+  while(d<=b){ const i=ROWIDX[d]; if(i!==undefined){ if(i1<0)i1=i; i2=i; } d=addDays(d,1); }
+  return i1<0?null:{i1,i2};
+}
+function uniqueTabName(base){
+  // 末尾の "(コピー)" や " 2" を剥がして語幹を得る
+  let stem=base.replace(/\s*\(コピー\)\s*$/,"").replace(/\s*\d+$/,"").trim();
+  if(!stem)stem=base;
+  const names=new Set(schedules.map(s=>s.name));
+  if(!names.has(stem))return stem;
+  let n=2; while(names.has(stem+" "+n))n++;
+  return stem+" "+n;
+}
+function showTabMenu(anchor){
+  closeTabMenu();
+  syncBack();
+  const menu=document.createElement("div");
+  menu.id="tabMenu";
+  const rect=anchor.getBoundingClientRect();
+  menu.style.left=Math.min(rect.left, innerWidth-230)+"px";
+  menu.style.top=(rect.bottom+2)+"px";
+  const addItem=(label,fn)=>{
+    const it=document.createElement("div"); it.className="tmItem"; it.textContent=label;
+    it.onclick=()=>{ closeTabMenu(); fn(); };
+    menu.appendChild(it);
+  };
+  addItem("空のシートを追加",()=>{
+    schedules.splice(activeTab+1,0,{name:uniqueTabName("新規シート"),
+      sections:schedules[activeTab].sections.slice(),
+      owners:(owners||[]).slice(), pages:(pages||[]).slice(), tasks:[], events:[]});
+    loadTab(activeTab+1); queueSave();
+  });
+  const hr=document.createElement("div"); hr.className="tmHr"; hr.textContent="― 複製して追加 ―";
+  menu.appendChild(hr);
+  schedules.forEach((sc,i)=>{
+    addItem("「"+sc.name+"」を複製",()=>{
+      const copy=JSON.parse(JSON.stringify({sections:sc.sections,tasks:sc.tasks,events:sc.events,
+        owners:sc.owners||sc.sections.map(()=>""), pages:sc.pages||sc.sections.map(()=>""),
+        hiddenRows:sc.hiddenRows||[]}));
+      copy.tasks.forEach((t,j)=>t.id="c"+Date.now()+"_"+j);
+      schedules.splice(i+1,0,{name:uniqueTabName(sc.name),...copy});
+      loadTab(i+1); queueSave();
+    });
+  });
+  document.body.appendChild(menu);
+  setTimeout(()=>document.addEventListener("click",closeTabMenu,{once:true}),0);
+}
+function closeTabMenu(){ const m=document.getElementById("tabMenu"); if(m)m.remove(); }
+function holidayMenu(d, ev){
+  closeTabMenu();
+  const menu=document.createElement("div");
+  menu.id="tabMenu";
+  menu.style.left=Math.min(ev.clientX, innerWidth-240)+"px";
+  menu.style.top=(ev.clientY+6)+"px";
+  const info=document.createElement("div"); info.className="tmHr";
+  info.textContent=d+"("+WD[dow(d)]+")"+(HOLIDAYS[d]?" 祝日: "+HOLIDAYS[d]:"")+(customHol[d]?" 休日: "+customHol[d]:"");
+  menu.appendChild(info);
+  const addItem=(label,fn)=>{const it=document.createElement("div"); it.className="tmItem";
+    it.textContent=label; it.onclick=()=>{closeTabMenu(); fn();}; menu.appendChild(it);};
+  if(customHol[d]){
+    addItem("名称を変更",()=>{
+      const v=prompt("休日の名称(例: XX様休日 / 当社休日)", customHol[d]);
+      if(!v)return;
+      pushUndo(); customHol[d]=v.trim(); render(); queueSave();
+    });
+    addItem("休日を解除",()=>{ pushUndo(); delete customHol[d]; render(); queueSave(); });
+  }else{
+    addItem("休日として登録(スキップ対象になります)",()=>{
+      const v=prompt("休日の名称(例: XX様休日 / 当社休日)", "当社休日");
+      if(!v)return;
+      pushUndo(); customHol[d]=v.trim(); render(); queueSave();
+    });
+  }
+  const hr2=document.createElement("div"); hr2.className="tmHr"; hr2.textContent="― 行の非表示 ―";
+  menu.appendChild(hr2);
+  addItem("⬆ この日より前の行を非表示(過去を畳む)",()=>{
+    if(CAL0>=d){ alert("これより前の行がありません"); return; }
+    pushUndo(); hiddenRows.push({start:CAL0, end:addDays(d,-1)}); normalizeHidden();
+    buildCalendar(); render(); queueSave();
+  });
+  addItem("この行だけ非表示",()=>{
+    pushUndo(); hiddenRows.push({start:d, end:d}); normalizeHidden();
+    buildCalendar(); render(); queueSave();
+  });
+  document.body.appendChild(menu);
+  setTimeout(()=>document.addEventListener("click",closeTabMenu,{once:true}),0);
+}
+/* ================= 保存(二層: Claude環境→ブラウザ→メモリ) ================= */
+// 保存キーはファイル/配置ごとに分離する(file://で複数HTMLがlocalStorageを共有しても衝突しない)。
+// DATA.instanceId(ビルド時に焼き込み)があれば最優先、無ければ配置パスから導出する。
+const SKEY=(function(){
+  let id="";
+  try{ id=(typeof DATA!=="undefined" && DATA.instanceId) ? String(DATA.instanceId) : ""; }catch(e){}
+  if(!id){
+    try{ id=(location.origin||"")+"|"+(location.pathname||""); }catch(e){ id="default"; }
+  }
+  // 短いハッシュ化(キーが長くなりすぎないよう)
+  let h=5381; for(let i=0;i<id.length;i++){ h=((h<<5)+h+id.charCodeAt(i))|0; }
+  return "prod-schedule-v3:"+(h>>>0).toString(36);
+})();
+const HOSTED=(location.protocol==="http:"||location.protocol==="https:")&&typeof window.storage==="undefined";
+let dirty=false;
+function markDirty(){ dirty=true; updateSaveBadge(); }
+function markSaved(kind){ dirty=false; updateSaveBadge(kind); }
+function updateSaveBadge(kind){
+  const el=document.getElementById("saveState"); if(!el)return;
+  if(dirty){
+    el.textContent="⚠ 未保存 — Excel書き出しを";
+    el.style.color="#fbbf24"; el.style.fontWeight="700";
+  }else{
+    el.style.color="#9ca3af"; el.style.fontWeight="400";
+    if(kind==="excel") el.textContent="Excel書き出し済み "+nowhm();
+    else if(!el.textContent) el.textContent = "保存はExcel書き出しで";
+  }
+}
+function nowhm(){ return new Date().toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"}); }
+const store={
+  async get(k){
+    if(HOSTED)return null;   // 共用環境: 復元しない(他利用者の内容を出さない)
+    try{ if(window.storage){ const r=await window.storage.get(k); if(r&&r.value)return r.value; } }catch(e){}
+    try{ if(typeof localStorage!=="undefined"){ const v=localStorage.getItem(k); if(v)return v; } }catch(e){}
+    return null;
+  },
+  async set(k,v){
+    if(HOSTED)return null;   // 共用環境: ブラウザに残さない
+    try{ if(window.storage){ await window.storage.set(k,v); return "この環境に保存"; } }catch(e){}
+    try{ if(typeof localStorage!=="undefined"){ localStorage.setItem(k,v); return "ブラウザに保存"; } }catch(e){}
+    return null;
+  }
+};
+let saveTimer=null;
+let importedBase=null;   // 直前に読み込んだExcelのファイル名(拡張子なし)。書き出し名の基準
+function sanitizeFileName(n){ return n.replace(/[\\/:*?"<>|]/g,"").trim(); }
+async function persist(){
+  const el=document.getElementById("saveState");
+  syncBack();
+  const where=await store.set(SKEY, JSON.stringify({schedules, activeTab, customHol, importedBase, savedAt:Date.now()}));
+  el.textContent = where
+    ? where+" "+new Date().toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})
+    : "保存はExcel書き出しで";
+}
+function queueSave(){ clearTimeout(saveTimer); saveTimer=setTimeout(persist,600); }
+async function loadSaved(){
+  try{
+    const v=await store.get(SKEY);
+    if(v){ const o=JSON.parse(v);
+      if(o.schedules && o.schedules.length) return o;   // {schedules,activeTab,savedAt}
+      if(o.tasks && o.tasks.length)   // 旧形式
+        return {schedules:[{name:"スケジュール", sections:o.sections||DATA.sections.slice(),
+                            tasks:o.tasks, events:o.events||[]}], activeTab:0};
+    }
+  }catch(e){}
+  return null;
+}
+/* ================= 描画 ================= */
+const ROWH=22, COLW=134, RAILW=98;
+const scroller=document.getElementById("scroller");
+function px(n){return n+"px";}
+function render(){
+  const head=document.getElementById("colHead");
+  head.innerHTML='<div class="corner"><div class="clab">メモ</div><div class="clab">ページ数</div></div>';
+  const cols=[...sections,"イベントなど"];
+  cols.forEach((label,i)=>{
+    const d=document.createElement("div");
+    const isEv = i===sections.length;
+    d.className="ch"+(isEv?" ev":"");
+    const span=document.createElement("span"); span.textContent=label; d.appendChild(span);
+    if(!isEv){
+      const ow=document.createElement("div"); ow.className="own";
+      ow.textContent=owners[i]||"　";
+      ow.title="ダブルクリックでメモを編集(主管・担当など自由記入)";
+      ow.addEventListener("dblclick",ev=>{
+        ev.stopPropagation();
+        const v=prompt("この列のメモ(主管・担当、状況など自由記入。例: IR/Sus)", owners[i]||"");
+        if(v===null)return;
+        pushUndo(); owners[i]=v.trim(); render(); queueSave();
+      });
+      d.appendChild(ow);
+      const pg=document.createElement("div"); pg.className="own pg";
+      pg.textContent=pages[i]||"　";
+      pg.title="ダブルクリックでページ数を編集";
+      pg.addEventListener("dblclick",ev=>{
+        ev.stopPropagation();
+        const v=prompt("この列のページ数(例: 10ページ)", pages[i]||"");
+        if(v===null)return;
+        pushUndo(); pages[i]=String(v).trim(); render(); queueSave();
+      });
+      d.appendChild(pg);
+    }
+    if(!isEv){
+      d.title="ダブルクリックで名前を変更";
+      d.addEventListener("dblclick",()=>editSectionName(i,d));
+      const bt=document.createElement("div"); bt.className="cbtns";
+      const mk=(txt,title,fn)=>{const b=document.createElement("button"); b.className="cbtn";
+        b.textContent=txt; b.title=title; b.onclick=(e)=>{e.stopPropagation(); fn(e);}; bt.appendChild(b);};
+      mk("⋯","この列の操作(コピー・追加・削除)",(ev)=>{
+        closeTabMenu();
+        const menu=document.createElement("div"); menu.id="tabMenu";
+        const r=ev.target.getBoundingClientRect();
+        menu.style.left=Math.max(4,r.right-170)+"px"; menu.style.top=(r.bottom+4)+"px";
+        const addItem=(label,fn)=>{const it=document.createElement("div"); it.className="tmItem";
+          it.textContent=label; it.onclick=(e)=>{e.stopPropagation(); closeTabMenu(); fn();}; menu.appendChild(it);};
+        addItem("⧉ この列を左にコピー",()=>copyColumn(i,-1));
+        addItem("＋ 右に空の列を追加",()=>addColumn(i));
+        addItem("⧉ この列を右にコピー",()=>copyColumn(i,1));
+        addItem("✕ この列を削除",()=>removeColumn(i));
+        document.body.appendChild(menu);
+        setTimeout(()=>document.addEventListener("click",closeTabMenu,{once:true}),0);
+      });
+      d.appendChild(bt);
+    }
+    head.appendChild(d);
+  });
+  const H=DAYS.length*ROWH, W=cols.length*COLW;
+  const canvas=document.getElementById("canvas");
+  canvas.style.height=px(H+44); canvas.style.width=px(W+RAILW);
+  /* rail */
+  const rail=document.getElementById("rail");
+  rail.innerHTML=""; rail.style.height=px(H);
+  const frag=document.createDocumentFragment();
+  DAYS.forEach(d=>{
+    const r=document.createElement("div");
+    const hol=HOLIDAYS[d]||customHol[d];
+    r.className="rday"+(isOff(d)?" off":"")+(hol?" hol":"")+(d.slice(8)==="01"?" m1":"");
+    r.innerHTML=`<span>${+d.slice(5,7)}/${+d.slice(8)}</span><span class="wd">${WD[dow(d)]}</span>`;
+    r.style.cursor="pointer";
+    r.title=customHol[d]?("休日: "+customHol[d]+"(クリックで変更/解除)"):"クリックで休日登録(当社・クライアント休日)";
+    r.addEventListener("click",ev=>{ev.stopPropagation(); holidayMenu(d, ev);});
+    frag.appendChild(r);
+  });
+  rail.appendChild(frag);
+  /* grid */
+  const grid=document.getElementById("grid");
+  grid.innerHTML=""; grid.style.height=px(H); grid.style.width=px(W);
+  cols.forEach((_,i)=>{
+    const c=document.createElement("div");
+    c.className="gcol"; c.style.left=px(i*COLW); c.style.height=px(H);
+    grid.appendChild(c);
+  });
+  DAYS.forEach((d,i)=>{
+    if(dow(d)===1){ const g=document.createElement("div");
+      g.className="gline m1"; g.style.top=px(i*ROWH); grid.appendChild(g);}
+  });
+  /* stripes: 下層(ソリッド=Excelの帯と同色)+上層(半透明・ブロック越しに休日が透ける) */
+  DAYS.forEach((d,i)=>{
+    if(isOff(d)){
+      const u=document.createElement("div");
+      u.className="stripe under";
+      u.style.top=px(i*ROWH); u.style.height=px(ROWH); u.style.width=px(W);
+      grid.appendChild(u);
+      const s=document.createElement("div");
+      const hol=HOLIDAYS[d]||customHol[d];
+      s.className="stripe "+(hol?"hol":"off");
+      s.style.top=px(i*ROWH); s.style.height=px(ROWH); s.style.width=px(W);
+      if(hol) s.innerHTML=`<span class="hname">${hol}</span>`;
+      grid.appendChild(s);
+    }
+  });
+  /* events: 同日に複数ある場合は横に分割して並べる(重なって片方が見えなくなるのを防ぐ。v2.13.0) */
+  const evByDate={};
+  events.forEach(e=>{ evByDate[e.date]=(evByDate[e.date]||0)+1; });
+  const evSeen={};
+  events.forEach((e,i)=>{
+    const ri=rowOf(e.date); if(ri<0)return;
+    const n=evByDate[e.date], k=(evSeen[e.date]=(evSeen[e.date]||0)+1)-1;
+    const w=(COLW-6)/n;
+    const c=document.createElement("div");
+    c.className="evchip"+(i===selEv?" sel":"");
+    c.title=e.text+"\n(クリックで編集。連動では動かない固定日程)";
+    c.style.left=px(sections.length*COLW+2+k*w); c.style.width=px(w-(n>1?2:0));
+    c.style.top=px(ri*ROWH+1); c.style.height=px(ROWH-2);
+    c.textContent=e.text.replace(/\n/g," ");
+    c.addEventListener("click",ev=>{ev.stopPropagation(); openEventEditor(i);});
+    grid.appendChild(c);
+  });
+  /* blocks: 手動z → 面積の大きい順に配置(小さいものがDOM後方=前面) */
+  const ordered=tasks.slice().sort((a,b)=>{
+    const za=a.z||0, zb=b.z||0;
+    if(za!==zb)return za-zb;
+    const aa=a.colSpan*100000+(toD(a.end)-toD(a.start));
+    const bb=b.colSpan*100000+(toD(b.end)-toD(b.start));
+    return bb-aa;
+  });
+  ordered.forEach(t=>{ const el=makeBlock(t); if(el) grid.appendChild(el); });
+  grid.addEventListener("dblclick",gridDblclick);
+  const hb=document.getElementById("hiddenB");
+  if(hb){ const hd=hiddenRanges();
+    hb.style.display=hd.length?"":"none";
+    hb.textContent="👁 非表示の行 "+hd.reduce((a,r)=>a+r.days,0)+"日"; }
+  /* 折り畳みマーカー: 非表示範囲の直後の可視行の上端に表示 */
+  for(const r of hiddenRanges()){
+    const after=visIdxNear(addDays(r.end,1));
+    const m=document.createElement("div");
+    m.className="collapseMark";
+    m.style.top=px(after*ROWH-3);
+    m.title="非表示: "+r.start.slice(5).replace("-","/")+"〜"+r.end.slice(5).replace("-","/")+"("+r.days+"日) クリックで再表示";
+    m.addEventListener("click",ev=>{ ev.stopPropagation();
+      pushUndo(); hiddenRows=hiddenRows.filter(x=>!(x.start===r.start&&x.end===r.end));
+      buildCalendar(); render(); queueSave();
+    });
+    grid.appendChild(m);
+  }
+  const eg=document.getElementById("emptyGuide");
+  if(eg) eg.style.display = (tasks.length===0 && events.length===0) ? "flex" : "none";
+  document.getElementById("rangeLabel").textContent=CAL0.replaceAll("-","/")+" 〜 "+CAL1.replaceAll("-","/");
+  markOverlaps();
+}
+function makeBlock(t){
+  const vs=visSpan(t.start,t.end);
+  if(!vs) return null;                       // 全行が非表示 → 描画しない
+  const b=document.createElement("div");
+  b.className="blk"+(t.bold?" bold":"")+(t.pinned?" pinned":"")+(t.id===selId?" sel":"");
+  b.dataset.id=t.id;
+  b.style.left=px(t.col*COLW+2);
+  b.style.width=px(t.colSpan*COLW-6);
+  b.style.top=px(vs.i1*ROWH+1);
+  b.style.height=px((vs.i2-vs.i1+1)*ROWH-3);
+  b.style.background=t.color;
+  if(t.color.toUpperCase()==="#9DC3E6"){       // 双方作業: 当社(緑)とクライアント(ピンク)で挟む
+    b.style.borderLeft="4px solid #70AD47";
+    b.style.borderRight="4px solid #E06666";
+  }
+  const white = t.tc==="w" ? true : t.tc==="b" ? false
+    : t.tc && t.tc.startsWith("#") ? false
+    : /^#(4472C4|C00000|335693)/i.test(t.color);
+  const nmColor = white ? "#fff" : (t.tc&&t.tc.startsWith("#")) ? t.tc : "#1f2937";
+  const blkH=(vs.i2-vs.i1+1)*ROWH-3;                // このブロックの高さ(px)
+  const maxLines=Math.max(1, Math.floor((blkH-4)/16));  // 1行≒16px、収まる表示行数
+  const allLines=t.name.split("\n");                 // 改行(A方式: 改行は維持)
+  b.title=t.name;                                    // ホバーで全文
+  // 各改行行は幅で折り返し、ブロック全体を高さぶんの行数でクランプ(改行+折り返しの合計)
+  b.innerHTML=`<div class="nm" style="color:${nmColor}; -webkit-line-clamp:${maxLines};">`+
+    allLines.map(ln=>esc(ln)||"&nbsp;").join("<br>")+
+    `</div>`+
+    (t.pinned?'<span class="pin">📌</span>':"")+
+    '<div class="hz top"></div><div class="hz bot"></div>'+
+    '<div class="hx left"></div><div class="hx right"></div>';
+  b.addEventListener("pointerdown",ev=>startDrag(ev,t.id));
+  return b;
+}
+const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+/* ================= 重なり警告 ================= */
+function taskTextCells(t){
+  // 工程名が書かれるセル = 各営業日区間の先頭日 × 左端の列(Excel書き出しと同じ)
+  const cells=[]; let inRun=false; let d=t.start;
+  while(d<=t.end){
+    if(!isOff(d)){ if(!inRun){ cells.push(d); inRun=true; } }
+    else inRun=false;
+    d=addDays(d,1);
+  }
+  return cells;   // 日付のリスト(列は t.col)
+}
+function coversCell(t,d,c){
+  return c>=t.col && c<t.col+t.colSpan && t.start<=d && d<=t.end && !isOff(d);
+}
+function markOverlaps(){
+  // 基準: ブロック同士が重なったら警告(同じ列レンジ・同じ日付レンジが交差)。
+  // 名前が読めるかどうかに関わらず、重なり自体を知らせる。
+  const warns=[];
+  document.querySelectorAll(".blk.warn").forEach(b=>b.classList.remove("warn"));
+  const c1=t=>t.col, c2=t=>t.col+t.colSpan-1;
+  for(let i=0;i<tasks.length;i++)for(let j=i+1;j<tasks.length;j++){
+    const a=tasks[i], b=tasks[j];
+    const colHit = c1(a)<=c2(b) && c1(b)<=c2(a);
+    const dateHit = a.start<=b.end && b.start<=a.end;
+    if(!colHit || !dateHit) continue;
+    const d = a.start>b.start ? a.start : b.start;   // 重なり開始日
+    const an=a.name.split("\n")[0], bn=b.name.split("\n")[0];
+    warns.push(`${d}: 「${an}」と「${bn}」が重なっています`);
+    [a,b].forEach(t=>{const el=document.querySelector(`[data-id="${t.id}"]`); if(el)el.classList.add("warn");});
+  }
+  document.getElementById("warnList").innerHTML=warns.length?("⚠ "+warns.slice(0,8).join("<br>⚠ ")+(warns.length>8?`<br>ほか${warns.length-8}件`:"")):"";
+  return warns;
+}
+/* ================= 連動シフト ================= */
+function cascade(edited, origStart, origEnd){
+  const dBd = bdIndex(edited.start)-bdIndex(origStart);
+  if(dBd===0 || mode==="off") return [];
+  const moved=[];
+  for(const t of tasks){
+    if(t.id===edited.id || t.pinned) continue;
+    if(mode==="col"){
+      if(!(t.col<edited.col+edited.colSpan && edited.col<t.col+t.colSpan)) continue;
+      if(t.colSpan>=sections.length) continue;   // 全列帯は同列モードでは動かさない
+    }
+    if(t.start>origEnd){
+      const ns=shiftSpanBD(t,dBd);
+      t.start=ns.start; t.end=ns.end; moved.push(t.id);
+    }
+  }
+  return moved;
+}
+/* リサイズ(終了変更)時: 後続をΔ(終了の営業日差)でずらす */
+function cascadeResize(edited, origEnd){
+  const dBd = bdIndex(edited.end)-bdIndex(origEnd);
+  if(dBd===0 || mode==="off") return [];
+  const moved=[];
+  for(const t of tasks){
+    if(t.id===edited.id || t.pinned) continue;
+    if(mode==="col" && !(t.col<edited.col+edited.colSpan && edited.col<t.col+t.colSpan)) continue;
+    if(t.start>origEnd){
+      const ns=shiftSpanBD(t,dBd);
+      t.start=ns.start; t.end=ns.end; moved.push(t.id);
+    }
+  }
+  return moved;
+}
+/* ================= セクション・列操作 ================= */
+function editSectionName(i, headCell){
+  const input=document.createElement("input");
+  input.value=sections[i];
+  headCell.innerHTML=""; headCell.appendChild(input);
+  input.focus(); input.select();
+  const commit=()=>{
+    const v=input.value.trim();
+    if(v && v!==sections[i]){ pushUndo(); sections[i]=v; queueSave(); }
+    render();
+  };
+  input.addEventListener("blur",commit);
+  input.addEventListener("keydown",e=>{
+    if(e.isComposing||e.keyCode===229)return;   // IME変換中のEnterは無視(確定操作)
+    if(e.key==="Enter")input.blur();
+    if(e.key==="Escape"){ input.value=sections[i]; input.blur(); }
+  });
+}
+function addColumn(idx){
+  pushUndo();
+  sections.splice(idx+1,0,"新しいセクション");
+  owners.splice(idx+1,0,""); pages.splice(idx+1,0,"");
+  tasks.forEach(t=>{
+    if(t.col>idx) t.col++;
+    else if(t.col<=idx && t.col+t.colSpan-1>idx) t.colSpan++;  // 帯ブロックは伸ばす
+  });
+  render(); queueSave();
+}
+function removeColumn(idx){
+  if(sections.length<=1){ alert("最後の1列は削除できません"); return; }
+  const inCol=tasks.filter(t=>t.col===idx && t.colSpan===1);
+  const msg=`列「${sections[idx]}」を削除します。`+
+    (inCol.length?`この列だけにある ${inCol.length} 件の工程も削除されます。`:"")+"よろしいですか?";
+  if(!confirm(msg))return;
+  pushUndo();
+  tasks=tasks.filter(t=>!(t.col===idx && t.colSpan===1));
+  tasks.forEach(t=>{
+    if(t.col>idx) t.col--;
+    else if(t.col<=idx && t.col+t.colSpan-1>=idx && t.colSpan>1) t.colSpan--;
+  });
+  sections.splice(idx,1);
+  owners.splice(idx,1); pages.splice(idx,1);
+  if(selId && !tasks.find(x=>x.id===selId)) closeEditor();
+  render(); queueSave();
+}
+function copyColumn(idx, dir){
+  pushUndo();
+  const at = dir<0 ? idx : idx+1;                    // 挿入位置
+  sections.splice(at,0, sections[idx]+"(コピー)");
+  owners.splice(at,0, owners[idx]||""); pages.splice(at,0, pages[idx]||"");
+  tasks.forEach(t=>{
+    if(t.col>=at) t.col++;
+    else if(t.col<at && t.col+t.colSpan-1>=at) t.colSpan++;   // 帯は伸ばす
+  });
+  const src = at<=idx ? idx+1 : idx;                 // ずれ補正後の元列
+  const copies = tasks.filter(t=>t.col===src && t.colSpan===1)
+    .map(t=>({...t, id:"t"+Math.random().toString(36).slice(2,9), col:at}));
+  tasks.push(...copies);
+  render(); queueSave();
+}
+let selEv=null;
+function openEventEditor(i){
+  selEv=i; selId=null;
+  document.getElementById("empty").style.display="none";
+  document.getElementById("editor").style.display="none";
+  const ed=document.getElementById("evEditor");
+  ed.style.display="flex"; ed.style.flexDirection="column"; ed.style.gap="10px";
+  document.getElementById("eText").value=events[i].text;
+  document.getElementById("eDate").value=events[i].date;
+  render();
+}
+function closeEventEditor(){
+  selEv=null;
+  document.getElementById("evEditor").style.display="none";
+  document.getElementById("empty").style.display="block";
+  render();
+}
+function gridDblclick(ev){
+  if(ev.target.closest(".blk")||ev.target.closest(".evchip"))return;
+  const grid=document.getElementById("grid");
+  const r=grid.getBoundingClientRect();
+  const col=Math.floor((ev.clientX-r.left)/COLW);
+  const ri=Math.floor((ev.clientY-r.top)/ROWH);
+  if(col<0||ri<0||ri>=DAYS.length)return;
+  if(col>=sections.length){                          // イベント列: イベント追加
+    pushUndo();
+    events.push({date:DAYS[ri], text:"新規イベント"});
+    events.sort((a,b)=>a.date<b.date?-1:1);
+    const i=events.findIndex(e=>e.date===DAYS[ri]&&e.text==="新規イベント");
+    render(); openEventEditor(i);
+    const tb=document.getElementById("eText"); tb.focus(); tb.select();
+    queueSave(); return;
+  }
+  let start=DAYS[ri];
+  while(isOff(start)) start=addDays(start,1);   // 休日なら翌営業日
+  pushUndo();
+  const t={id:"t"+Date.now(), col, colSpan:1, name:"新規工程",
+    start, end:addBD(start,2), color:PALETTE[2], tc:"b", pinned:false, bold:false};
+  tasks.push(t); render(); openEditor(t.id);
+  const nameBox=document.getElementById("pName"); nameBox.focus(); nameBox.select();
+  queueSave();
+}
+/* ================= ドラッグ ================= */
+let drag=null;
+const badge=document.getElementById("badge");
+function startDrag(ev, id){
+  const t=tasks.find(x=>x.id===id);
+  select(id);
+  let kind="move";
+  if(ev.target.classList.contains("hz")) kind=ev.target.classList.contains("top")?"top":"bot";
+  if(ev.target.classList.contains("hx")) kind=ev.target.classList.contains("left")?"left":"right";
+  drag={id, kind, y0:ev.clientY, x0:ev.clientX,
+        orig:{start:t.start,end:t.end,col:t.col,colSpan:t.colSpan}, moved:false};
+  ev.target.setPointerCapture && ev.target.setPointerCapture(ev.pointerId);
+  document.querySelector(`[data-id="${id}"]`).classList.add("dragging");
+  window.addEventListener("pointermove",onDrag);
+  window.addEventListener("pointerup",endDrag);
+  ev.preventDefault();
+}
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function visIdxNear(dateISO){
+  if(ROWIDX[dateISO]!==undefined) return ROWIDX[dateISO];
+  let d=dateISO;                                  // 前方の可視日を探し、なければ後方
+  for(let k=0;k<400;k++){ d=addDays(d,1); if(ROWIDX[d]!==undefined)return ROWIDX[d]; }
+  d=dateISO;
+  for(let k=0;k<400;k++){ d=addDays(d,-1); if(ROWIDX[d]!==undefined)return ROWIDX[d]; }
+  return 0;
+}
+function onDrag(ev){
+  if(!drag) return;
+  const t=tasks.find(x=>x.id===drag.id);
+  const dRows=Math.round((ev.clientY-drag.y0)/ROWH);
+  const dCols=Math.round((ev.clientX-drag.x0)/COLW);
+  if(dRows!==0||dCols!==0) drag.moved=true;
+  if(drag.kind==="left"){
+    const nc=clamp(drag.orig.col+dCols, 0, drag.orig.col+drag.orig.colSpan-1);
+    t.col=nc; t.colSpan=drag.orig.colSpan+(drag.orig.col-nc);
+  }else if(drag.kind==="right"){
+    t.colSpan=clamp(drag.orig.colSpan+dCols, 1, sections.length-t.col);
+  }else if(drag.kind==="move"){
+    t.col=clamp(drag.orig.col+dCols, 0, sections.length-t.colSpan);
+    let ns=addDays(drag.orig.start,dRows);
+    while(isOff(ns)) ns=addDays(ns, dRows>=0?1:-1);          // 営業日スナップ
+    const k=countBD(drag.orig.start,drag.orig.end);
+    t.start=ns; t.end=addBD(ns,Math.max(k-1,0));
+  }else if(drag.kind==="bot"){
+    let ne=addDays(drag.orig.end,dRows);
+    while(isOff(ne)) ne=addDays(ne, dRows>=0?1:-1);
+    if(ne<t.start) ne=t.start;
+    t.end=ne;
+  }else{
+    let ns=addDays(drag.orig.start,dRows);
+    while(isOff(ns)) ns=addDays(ns, dRows>=0?1:-1);
+    if(ns>t.end) ns=t.end;
+    t.start=ns;
+  }
+  const el=document.querySelector(`[data-id="${t.id}"]`);
+  const vsp=visSpan(t.start,t.end);
+  if(el && vsp){
+    el.style.top=px(vsp.i1*ROWH+1);
+    el.style.height=px((vsp.i2-vsp.i1+1)*ROWH-3);
+    el.style.left=px(t.col*COLW+2);
+    el.style.width=px(t.colSpan*COLW-6);
+  }
+  badge.style.display="block";
+  badge.style.left=px(ev.clientX+14); badge.style.top=px(ev.clientY+10);
+  if(drag.kind==="left"||drag.kind==="right"){
+    const names=sections.slice(t.col,t.col+t.colSpan).join(" / ");
+    badge.innerHTML=`<b>${t.colSpan}列</b> ${esc(names.length>40?names.slice(0,40)+"…":names)}`;
+  }else{
+    const dBd = drag.kind==="move" ? bdIndex(t.start)-bdIndex(drag.orig.start)
+                                   : bdIndex(t.end)-bdIndex(drag.orig.end);
+    const dupHint = (drag.kind==="move" && (ev.ctrlKey||ev.metaKey)) ? ` <b style="color:#0a7">⧉複製</b>` : "";
+    badge.innerHTML=`${t.start.slice(5).replace("-","/")}〜${t.end.slice(5).replace("-","/")} <b>${dBd>=0?"+":""}${dBd}営業日</b>`+
+      (t.col!==drag.orig.col?` → ${esc(sections[t.col].slice(0,14))}`:"")+dupHint;
+  }
+}
+function endDrag(ev){
+  window.removeEventListener("pointermove",onDrag);
+  window.removeEventListener("pointerup",endDrag);
+  badge.style.display="none";
+  if(!drag) return;
+  const t=tasks.find(x=>x.id===drag.id);
+  const el=document.querySelector(`[data-id="${t.id}"]`);
+  el && el.classList.remove("dragging");
+  if(drag.moved && drag.kind==="move" && (ev.ctrlKey||ev.metaKey)){
+    // Ctrl+ドラッグ=複製(v2.10.0): 元の工程は動かさず、ドロップ位置にコピーを置く。
+    // 連動シフトは起こさない(既存工程を一切動かさない)。Undo1回で複製ごと戻る。
+    const np={start:t.start, end:t.end, col:t.col, colSpan:t.colSpan};
+    t.start=drag.orig.start; t.end=drag.orig.end; t.col=drag.orig.col; t.colSpan=drag.orig.colSpan;
+    pushUndo();   // 複製前の状態を保存
+    const copy={...t, ...np, id:"c"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)};
+    tasks.push(copy);
+    buildCalendar(); render(); openEditor(copy.id); queueSave();
+    drag=null; return;
+  }
+  if(drag.moved){
+    // Undoは「移動前」の状態を積む。tはonDragで既に動いているため、一旦origへ戻して
+    // snapshotを取り、改めて新位置を適用する(旧実装は移動後にpushUndoしていたため
+    // ドラッグ移動がCtrl+Zで戻らないバグがあった。v2.10.0で根治)
+    const np={start:t.start, end:t.end, col:t.col, colSpan:t.colSpan};
+    t.start=drag.orig.start; t.end=drag.orig.end; t.col=drag.orig.col; t.colSpan=drag.orig.colSpan;
+    pushUndo();
+    t.start=np.start; t.end=np.end; t.col=np.col; t.colSpan=np.colSpan;
+    const movedIds = drag.kind==="move"
+      ? cascade(t, drag.orig.start, drag.orig.end)
+      : (drag.kind==="bot"||drag.kind==="top")
+        ? cascadeResize(t, drag.orig.end)
+        : [];
+    render();
+    movedIds.forEach(id=>{
+      const e=document.querySelector(`[data-id="${id}"]`); if(e)e.classList.add("cascaded");
+    });
+    openEditor(t.id); queueSave();
+  }else{
+    // 単純クリック: エディタを開く。すばやく2回目のクリック(600ms以内・同一ブロック)なら
+    // 工程名欄にフォーカス+全選択(=「ダブルクリックで名前修正」の体感。v2.11.0)
+    // 注: pointerdownをpreventDefaultしているためネイティブdblclickは発火しない。自前判定。
+    const now=Date.now(), lc=window.__blkLastClick;
+    window.__blkLastClick={id:t.id, time:now};
+    openEditor(t.id);
+    if(lc && lc.id===t.id && now-lc.time<600){
+      const nm=document.getElementById("pName");
+      if(nm){ nm.focus(); nm.select(); }
+    }
+  }
+  drag=null;
+}
+/* ================= undo ================= */
+function snapshot(){ return JSON.stringify({t:tasks, s:sections, o:owners, p:pages, e:events, h:customHol, r:hiddenRows}); }
+function restore(js){ const o=JSON.parse(js); tasks=o.t; sections=o.s;
+  owners=(o.o&&o.o.length===sections.length)?o.o:sections.map(()=>"");
+  pages=(o.p&&o.p.length===sections.length)?o.p:sections.map(()=>"");
+  if(o.e)events=o.e; if(o.h)customHol=o.h; hiddenRows=o.r||[]; }
+function pushUndo(){ undoStack.push(snapshot()); if(undoStack.length>60)undoStack.shift(); redoStack=[]; syncUndoBtns(); markDirty(); }
+function doUndo(){ if(!undoStack.length)return; redoStack.push(snapshot());
+  restore(undoStack.pop()); render(); if(selId)openEditor(selId); queueSave(); syncUndoBtns(); }
+function doRedo(){ if(!redoStack.length)return; undoStack.push(snapshot());
+  restore(redoStack.pop()); render(); if(selId)openEditor(selId); queueSave(); syncUndoBtns(); }
+function syncUndoBtns(){
+  document.getElementById("undoB").disabled=!undoStack.length;
+  document.getElementById("redoB").disabled=!redoStack.length;
+}
+/* ================= パネル ================= */
+function select(id){ selId=id;
+  document.querySelectorAll(".blk.sel").forEach(b=>b.classList.remove("sel"));
+  const el=document.querySelector(`[data-id="${id}"]`); if(el)el.classList.add("sel");
+}
+function openEditor(id){
+  const t=tasks.find(x=>x.id===id); if(!t)return;
+  selEv=null; document.getElementById("evEditor").style.display="none";
+  select(id);
+  document.getElementById("empty").style.display="none";
+  document.getElementById("editor").style.display="flex";
+  document.getElementById("editor").style.flexDirection="column";
+  document.getElementById("editor").style.gap="10px";
+  document.getElementById("pName").value=t.name;
+  document.getElementById("pStart").value=t.start;
+  document.getElementById("pEnd").value=t.end;
+  document.getElementById("pBdIn").value=countBD(t.start,t.end);
+  const sec=document.getElementById("pSec");
+  sec.innerHTML=sections.map((s,i)=>`<option value="${i}" ${i===t.col?"selected":""}>${esc(s)}</option>`).join("");
+  const cw=document.getElementById("pColors");
+  cw.innerHTML="";
+  PALETTE.forEach(c=>{
+    const d=document.createElement("div");
+    d.className="sw"+(c.toUpperCase()===t.color.toUpperCase()?" on":"");
+    d.style.background=c;
+    d.title=PALETTE_LABEL[c]||c;
+    d.onclick=()=>{ pushUndo();
+      // 一括チェックON: このシート内の同色工程をまとめて変更(v2.10.0)
+      const bulk=document.getElementById("pColorAll").checked;
+      const oldC=(t.color||"").toUpperCase();
+      const targets=bulk?tasks.filter(x=>(x.color||"").toUpperCase()===oldC):[t];
+      for(const x of targets){ x.color=c; x.tc = /^#(335693|C00000)$/i.test(c) ? "w" : "b"; }  // 濃色は白字を既定に
+      render(); openEditor(id); queueSave(); };
+    cw.appendChild(d);
+  });
+  // 文字色トグル・ピッカーの状態反映
+  const white = t.tc==="w";
+  document.getElementById("tcW").classList.toggle("on", white);
+  document.getElementById("tcB").classList.toggle("on", t.tc==="b" || !t.tc);
+  document.getElementById("pBold").classList.toggle("on", !!t.bold);
+  document.getElementById("pColorPick").value = t.color.length===7 ? t.color : "#C6E0B4";
+  document.getElementById("pTcPick").value = (t.tc&&t.tc.startsWith("#")) ? t.tc : (white?"#ffffff":"#1f2937");
+  document.getElementById("pPin").textContent=t.pinned?"📌 固定を解除":"📌 固定する";
+  markOverlaps();
+}
+function closeEditor(){ selId=null;
+  document.getElementById("editor").style.display="none";
+  document.getElementById("empty").style.display="block";
+  document.querySelectorAll(".blk.sel").forEach(b=>b.classList.remove("sel"));
+}
+function bindPanel(){
+  const cur=()=>tasks.find(x=>x.id===selId);
+  // 工程名: 入力のたびにデータへ即保存(他ブロックをクリックしても編集が消えないように)。
+  // undoは編集セッションの最初の1回だけ積む。表示の再描画はblur時にまとめて行う。
+  let nameEditUndoDone=false;
+  document.getElementById("pName").addEventListener("input",e=>{
+    const t=cur(); if(!t)return;
+    if(!nameEditUndoDone){ pushUndo(); nameEditUndoDone=true; }
+    t.name=e.target.value; queueSave();
+  });
+  document.getElementById("pName").addEventListener("blur",()=>{
+    nameEditUndoDone=false;
+    const t=cur(); if(!t)return; render(); openEditor(t.id);
+  });
+  document.getElementById("pStart").addEventListener("change",e=>{
+    const t=cur(); if(!t)return; const v=e.target.value; if(!v)return;
+    pushUndo(); const o={start:t.start,end:t.end};
+    const k=countBD(t.start,t.end); t.start=isOff(v)?addBD(v,0):v; t.end=addBD(t.start,Math.max(k-1,0));
+    const ids=cascade(t,o.start,o.end); buildCalendar(); render(); openEditor(t.id); queueSave();
+  });
+  document.getElementById("pEnd").addEventListener("change",e=>{
+    const t=cur(); if(!t)return; const v=e.target.value; if(!v)return;
+    pushUndo(); const o={end:t.end};
+    t.end=isOff(v)?addBD(v,0):v; if(t.end<t.start)t.end=t.start;
+    const ids=cascadeResize(t,o.end); buildCalendar(); render(); openEditor(t.id); queueSave();
+  });
+  // 営業日数の直接入力 → 終了日を自動計算(終了日を直接変えた場合と完全に同じ経路=連動シフトも同一挙動)
+  document.getElementById("pBdIn").addEventListener("change",e=>{
+    const t=cur(); if(!t)return;
+    const n=Math.floor(+e.target.value);
+    if(!isFinite(n)||n<1){ e.target.value=countBD(t.start,t.end); return; }
+    pushUndo(); const o={end:t.end};
+    t.end=addBD(t.start,n-1); if(t.end<t.start)t.end=t.start;
+    const ids=cascadeResize(t,o.end); buildCalendar(); render(); openEditor(t.id); queueSave();
+  });
+  document.getElementById("pSec").addEventListener("change",e=>{const t=cur(); if(!t)return; pushUndo(); t.col=+e.target.value; t.colSpan=1; render(); openEditor(t.id); queueSave();});
+  document.getElementById("pPin").onclick=()=>{const t=cur(); if(!t)return; pushUndo(); t.pinned=!t.pinned; render(); openEditor(t.id); queueSave();};
+  document.getElementById("pDel").onclick=()=>{const t=cur(); if(!t)return; pushUndo(); tasks=tasks.filter(x=>x.id!==t.id); closeEditor(); render(); queueSave();};
+  document.getElementById("pClose").onclick=closeEditor;
+}
+/* ================= ツールバー ================= */
+function bindToolbar(){
+  const set=(m)=>{mode=m;["mAll","mCol","mOff"].forEach(x=>document.getElementById(x).classList.remove("on"));
+    document.getElementById(m==="all"?"mAll":m==="col"?"mCol":"mOff").classList.add("on");};
+  document.getElementById("mAll").onclick=()=>set("all");
+  document.getElementById("mCol").onclick=()=>set("col");
+  document.getElementById("mOff").onclick=()=>set("off");
+  document.getElementById("undoB").onclick=doUndo;
+  document.getElementById("redoB").onclick=doRedo;
+  document.getElementById("addB").onclick=()=>{
+    pushUndo();
+    const base = selId ? tasks.find(x=>x.id===selId) : null;
+    const start = base ? addBD(base.end,1) : DAYS.find(d=>!isOff(d));
+    const t={id:"t"+Date.now(), col:base?base.col:0, colSpan:1, name:"新規工程",
+      start, end:addBD(start,4), color:PALETTE[2], tc:"b", pinned:false, bold:false};
+    tasks.push(t); buildCalendar(); render(); openEditor(t.id); queueSave();
+  };
+  // 起点/納品日の入力欄を現状に合わせて更新(リベース後・タブ切替後に呼ぶ)
+  const refreshRebaseInputs=()=>{
+    if(!tasks.length)return;
+    let mn=null,mx=null; for(const t of tasks){ if(!mn||t.start<mn)mn=t.start; if(!mx||t.end>mx)mx=t.end; }
+    document.getElementById("anchorDate").value=mn;
+    document.getElementById("dueDate").value=mx;
+  };
+  window.__refreshRebaseInputs=refreshRebaseInputs;
+  document.getElementById("rebaseB").onclick=()=>{
+    const v=document.getElementById("anchorDate").value;
+    if(!v){ alert("起点日を指定してください"); return; }
+    let mn=null; for(const t of tasks){ if(!mn||t.start<mn)mn=t.start; }
+    if(mn && !confirm("最初の工程("+mn+")が "+v+" から始まるよう、このシートの全工程・イベントを土日祝を除いた営業日ベースで移動します。よろしいですか?(Ctrl+Zで戻せます)"))return;
+    const d=rebaseTo(v);
+    if(d!==null) refreshRebaseInputs();
+  };
+  document.getElementById("rebaseEndB").onclick=()=>{
+    const v=document.getElementById("dueDate").value;
+    if(!v){ alert("納品日を指定してください"); return; }
+    if(!tasks.length){ alert("工程がありません(逆算は最後の工程の終了日を基準にします)"); return; }
+    let mx=null; for(const t of tasks){ if(!mx||t.end>mx)mx=t.end; }
+    if(!confirm("最後の工程("+mx+")が "+v+" に終わるよう、このシートの全工程・イベントを土日祝を除いた営業日ベースで逆算移動します。よろしいですか?(Ctrl+Zで戻せます)"))return;
+    const d=rebaseEndTo(v);
+    if(d!==null) refreshRebaseInputs();
+  };
+  document.getElementById("newB").onclick=()=>{
+    const today=iso(new Date());
+    syncBack();
+    schedules.splice(activeTab+1,0,{name:"新規案件", sections:sections.slice(),
+      owners:(owners||[]).slice(), pages:(pages||[]).slice(), tasks:[], events:[]});
+    emptyStart=today;
+    loadTab(activeTab+1);
+    document.getElementById("anchorDate").value=today;
+    queueSave();
+  };
+  const overlapsOf=(t)=>tasks.filter(x=>x.id!==t.id &&
+    x.col<t.col+t.colSpan && t.col<x.col+x.colSpan && x.start<=t.end && t.start<=x.end);
+  document.getElementById("pColorPick").addEventListener("change",e=>{
+    const t=tasks.find(x=>x.id===selId); if(!t)return;
+    pushUndo();
+    const bulk=document.getElementById("pColorAll").checked;
+    const oldC=(t.color||"").toUpperCase();
+    const targets=bulk?tasks.filter(x=>(x.color||"").toUpperCase()===oldC):[t];
+    // 暗い色なら文字を自動で白に(手動指定があれば尊重)
+    const h=e.target.value.slice(1);
+    const lum=(parseInt(h.slice(0,2),16)*.299+parseInt(h.slice(2,4),16)*.587+parseInt(h.slice(4,6),16)*.114);
+    for(const x of targets){ x.color=e.target.value;
+      if(!x.tc || x.tc==="w" || x.tc==="b") x.tc = lum<140 ? "w" : "b"; }
+    render(); openEditor(t.id); queueSave();
+  });
+  document.getElementById("pTcPick").addEventListener("change",e=>{
+    const t=tasks.find(x=>x.id===selId); if(!t)return;
+    pushUndo(); t.tc=e.target.value; render(); openEditor(t.id); queueSave();
+  });
+  document.getElementById("tcW").onclick=()=>{
+    const t=tasks.find(x=>x.id===selId); if(!t)return;
+    pushUndo(); t.tc="w"; render(); openEditor(t.id); queueSave();
+  };
+  document.getElementById("tcB").onclick=()=>{
+    const t=tasks.find(x=>x.id===selId); if(!t)return;
+    pushUndo(); t.tc="b"; render(); openEditor(t.id); queueSave();
+  };
+  document.getElementById("pBold").onclick=()=>{
+    const t=tasks.find(x=>x.id===selId); if(!t)return;
+    pushUndo(); t.bold=!t.bold; render(); openEditor(t.id); queueSave();
+  };
+  document.getElementById("hiddenB").onclick=(ev)=>{
+    ev.stopPropagation(); closeTabMenu();
+    const menu=document.createElement("div"); menu.id="tabMenu";
+    const r=ev.target.getBoundingClientRect();
+    menu.style.left=Math.min(r.left, innerWidth-260)+"px"; menu.style.top=(r.bottom+2)+"px";
+    const hr=document.createElement("div"); hr.className="tmHr"; hr.textContent="クリックで再表示(このシート)";
+    menu.appendChild(hr);
+    const mk=(label,fn)=>{const it=document.createElement("div"); it.className="tmItem";
+      it.textContent=label; it.onclick=()=>{closeTabMenu(); fn();}; menu.appendChild(it);};
+    hiddenRanges().forEach(rg=>{
+      mk(rg.start.slice(5).replace("-","/")+"〜"+rg.end.slice(5).replace("-","/")+"("+rg.days+"日)",()=>{
+        pushUndo(); hiddenRows=hiddenRows.filter(x=>!(x.start===rg.start&&x.end===rg.end));
+        buildCalendar(); render(); queueSave();
+      });
+    });
+    if(hiddenRows.length>1) mk("すべて再表示",()=>{
+      pushUndo(); hiddenRows=[]; buildCalendar(); render(); queueSave();
+    });
+    document.body.appendChild(menu);
+    setTimeout(()=>document.addEventListener("click",closeTabMenu,{once:true}),0);
+  };
+  document.getElementById("pFront").onclick=()=>{
+    const t=tasks.find(x=>x.id===selId); if(!t)return;
+    const o=overlapsOf(t);
+    if(!o.length){alert("重なっているブロックがありません");return;}
+    pushUndo(); t.z=Math.max(...o.map(x=>x.z||0))+1; render(); openEditor(t.id); queueSave();
+  };
+  document.getElementById("pBack").onclick=()=>{
+    const t=tasks.find(x=>x.id===selId); if(!t)return;
+    const o=overlapsOf(t);
+    if(!o.length){alert("重なっているブロックがありません");return;}
+    pushUndo(); t.z=Math.min(...o.map(x=>x.z||0))-1; render(); openEditor(t.id); queueSave();
+  };
+  document.getElementById("pDup").onclick=()=>{
+    const t=tasks.find(x=>x.id===selId); if(!t)return;
+    pushUndo();
+    const nc=Math.min(t.col+1, sections.length-t.colSpan);
+    const c={...t, id:"t"+Date.now(), col:nc};
+    tasks.push(c); render(); openEditor(c.id); queueSave();
+  };
+  // イベント文: 入力のたびに即時保存(blur待ちのchangeだと、ブロック直クリックで
+  // pointerdown→selEv=null が先に走り編集が消える。v2.5.1の工程名と同族のバグ。v2.12.1で根治)
+  // v2.13.0: イベントは改行不可(1行のみ)。Excelの1セル結合で「1イベント内の改行」と
+  // 「複数イベントの区切り」が区別できず、往復で分裂するため入力時点で禁止する。
+  document.getElementById("eText").addEventListener("keydown",e=>{
+    if(e.isComposing||e.keyCode===229)return;   // IME変換確定のEnterは通す
+    if(e.key==="Enter"){ e.preventDefault(); e.target.blur(); }
+  });
+  let evTextUndoDone=false;
+  document.getElementById("eText").addEventListener("input",e=>{
+    if(selEv==null)return;
+    if(!evTextUndoDone){ pushUndo(); evTextUndoDone=true; }
+    let v=e.target.value;
+    if(/\r|\n/.test(v)){ v=v.replace(/\s*\r?\n\s*/g," "); e.target.value=v; }  // 貼り付けの改行も1行化
+    events[selEv].text=v; queueSave();
+  });
+  document.getElementById("eText").addEventListener("blur",()=>{
+    evTextUndoDone=false;
+    if(selEv!=null) render();
+  });
+  document.getElementById("eDate").addEventListener("input",e=>{
+    if(selEv==null)return; const v=e.target.value; if(!v)return;
+    pushUndo(); events[selEv].date=v; buildCalendar(); render(); queueSave();
+  });
+  document.getElementById("eDel").onclick=()=>{
+    if(selEv==null)return; pushUndo(); events.splice(selEv,1); closeEventEditor(); queueSave();
+  };
+  document.getElementById("eClose").onclick=closeEventEditor;
+  document.getElementById("exportB").onclick=()=>{
+    try{ exportXlsx(); markSaved("excel"); }catch(e){ alert("書き出しに失敗しました: "+e.message); }
+  };
+  document.getElementById("importB").onclick=()=>document.getElementById("importFile").click();
+  document.getElementById("importFile").addEventListener("change",async e=>{
+    const f=e.target.files[0]; e.target.value="";
+    if(!f)return;
+    try{
+      const r=await importXlsx(f);
+      importedBase=sanitizeFileName(f.name.replace(/\.xlsx$/i,""))||null;   // 書き出し名の基準に
+      alert("読み込みました("+r.mode+"): シート"+r.sheets+"枚 / 工程"+r.tasks+"件 / イベント"+r.events+"件");
+    }catch(err){ alert(err.message||"読み込みに失敗しました"); }
+  });
+  document.getElementById("tmplB").onclick=()=>{
+    if(!DATA.template){ alert("テンプレートが組み込まれていません"); return; }
+    if(!confirm("標準テンプレート(和文・英文)を今日開始で開きます。現在のシートは破棄されます。よろしいですか?"))return;
+    importedBase=null;   // 元名は引き継がない
+    schedules=JSON.parse(JSON.stringify(DATA.template));
+    schedules.forEach((sc,i)=>sc.tasks.forEach((t,j)=>t.id="tm"+i+"_"+j));
+    // 全タブ横断の最初の工程を今日へ(同一Δで全タブ移動=和英の相対関係を維持)
+    let mn=null;
+    for(const sc of schedules)for(const t of sc.tasks){ if(!mn||t.start<mn)mn=t.start; }
+    const today=iso(new Date());
+    if(mn){
+      const delta=bdSigned(mn, today);
+      if(delta!==0){
+        for(const sc of schedules){
+          for(const t of sc.tasks){ const ns=shiftSpanBD(t,delta); t.start=ns.start; t.end=ns.end; }
+          for(const e of sc.events){ e.date=addBD(e.date,delta); }
+        }
+      }
+    }
+    loadTab(0);
+    document.getElementById("anchorDate").value=addBD(today,0);
+    queueSave();
+  };
+  document.getElementById("resetB").onclick=()=>{
+    if(!confirm("全シートを破棄して白紙(今日開始)に戻します。よろしいですか?"))return;
+    importedBase=null;   // 元名は引き継がない
+    schedules=[{name:"新規案件", sections:DATA.sections.slice(),
+      owners:DATA.sections.map(()=>""), pages:DATA.sections.map(()=>""), tasks:[], events:[]}];
+    emptyStart=iso(new Date());
+    loadTab(0); queueSave();
+  };
+  window.addEventListener("keydown",e=>{
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"){ e.preventDefault(); e.shiftKey?doRedo():doUndo(); return; }
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="y"){ e.preventDefault(); doRedo(); return; }  // 既存ツール準拠
+    // Delete/Backspace: 選択中の工程を削除(入力欄の編集中は通常のキーとして扱う)
+    if(e.key==="Delete"||e.key==="Backspace"){
+      const ae=document.activeElement;
+      if(ae&&(ae.tagName==="INPUT"||ae.tagName==="TEXTAREA"||ae.isContentEditable))return;
+      if(!selId)return;
+      const t=tasks.find(x=>x.id===selId); if(!t)return;
+      e.preventDefault();
+      pushUndo(); tasks=tasks.filter(x=>x.id!==t.id); closeEditor(); render(); queueSave();
+    }
+  });
+}
+/* ================= XLSX入出力(自前実装・ライブラリ不使用) ================= */
+const CRCT=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;
+  for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c;}return t;})();
+function crc32(u8){let c=0xFFFFFFFF;for(let i=0;i<u8.length;i++)c=CRCT[(c^u8[i])&255]^(c>>>8);return(c^0xFFFFFFFF)>>>0;}
+function zipStore(files){
+  const enc=new TextEncoder(); const parts=[],central=[]; let off=0;
+  for(const f of files){
+    const nb=enc.encode(f.name), data=typeof f.data==="string"?enc.encode(f.data):f.data;
+    const crc=crc32(data), sz=data.length;
+    const lh=new Uint8Array(30+nb.length), lv=new DataView(lh.buffer);
+    lv.setUint32(0,0x04034b50,true); lv.setUint16(4,20,true); lv.setUint16(6,0x0800,true);
+    lv.setUint32(14,crc,true); lv.setUint32(18,sz,true); lv.setUint32(22,sz,true);
+    lv.setUint16(26,nb.length,true); lh.set(nb,30);
+    parts.push(lh,data);
+    const ch=new Uint8Array(46+nb.length), cv=new DataView(ch.buffer);
+    cv.setUint32(0,0x02014b50,true); cv.setUint16(4,20,true); cv.setUint16(6,20,true);
+    cv.setUint16(8,0x0800,true);
+    cv.setUint32(16,crc,true); cv.setUint32(20,sz,true); cv.setUint32(24,sz,true);
+    cv.setUint16(28,nb.length,true); cv.setUint32(42,off,true); ch.set(nb,46);
+    central.push(ch); off+=lh.length+sz;
+  }
+  const cd=central.reduce((a,b)=>a+b.length,0);
+  const eo=new Uint8Array(22), ev2=new DataView(eo.buffer);
+  ev2.setUint32(0,0x06054b50,true); ev2.setUint16(8,files.length,true); ev2.setUint16(10,files.length,true);
+  ev2.setUint32(12,cd,true); ev2.setUint32(16,off,true);
+  const out=new Uint8Array(off+cd+22); let p=0;
+  for(const b of [...parts,...central,eo]){ out.set(b,p); p+=b.length; }
+  return out;
+}
+async function unzip(buf){
+  const u8=new Uint8Array(buf), dv=new DataView(u8.buffer,u8.byteOffset,u8.byteLength);
+  let e=u8.length-22; while(e>=0&&dv.getUint32(e,true)!==0x06054b50)e--;
+  if(e<0)throw new Error("zipではありません");
+  const n=dv.getUint16(e+10,true); let p=dv.getUint32(e+16,true);
+  const dec=new TextDecoder(); const out={};
+  for(let i=0;i<n;i++){
+    const method=dv.getUint16(p+10,true), csz=dv.getUint32(p+20,true);
+    const nl=dv.getUint16(p+28,true), el=dv.getUint16(p+30,true), cl=dv.getUint16(p+32,true);
+    const lho=dv.getUint32(p+42,true);
+    const name=dec.decode(u8.subarray(p+46,p+46+nl));
+    const lnl=dv.getUint16(lho+26,true), lel=dv.getUint16(lho+28,true);
+    const raw=u8.subarray(lho+30+lnl+lel, lho+30+lnl+lel+csz);
+    if(method===0) out[name]=dec.decode(raw);
+    else if(method===8){
+      if(typeof DecompressionStream==="undefined")
+        throw new Error("このブラウザは圧縮xlsxを読めません(Edge/Chrome推奨)");
+      const st=new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      out[name]=dec.decode(new Uint8Array(await new Response(st).arrayBuffer()));
+    }
+    p+=46+nl+el+cl;
+  }
+  return out;
+}
+const xesc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  .replace(/"/g,"&quot;").replace(/\n/g,"&#10;");
+const xunesc=s=>String(s)
+  .replace(/&#x([0-9A-Fa-f]+);/g,(_,h)=>String.fromCodePoint(parseInt(h,16)))
+  .replace(/&#(\d+);/g,(_,d)=>String.fromCodePoint(+d))
+  .replace(/&lt;/g,"<").replace(/&gt;/g,">")
+  .replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&");
+const colL=n=>{let s="";n++;while(n>0){s=String.fromCharCode(65+(n-1)%26)+s;n=Math.floor((n-1)/26);}return s;};
+const colN=s=>{let n=0;for(const ch of s)n=n*26+(ch.charCodeAt(0)-64);return n-1;};
+const dateSerial=s=>Math.round((toD(s).getTime()-Date.UTC(1899,11,30))/MS);
+const serialDate=v=>iso(new Date(Date.UTC(1899,11,30)+Math.round(v)*MS));
+const sanitizeSheet=(n,used)=>{
+  let s=String(n).replace(/[\[\]:*?\/\\]/g,"_").slice(0,28)||"Sheet";
+  let out=s,k=2; while(used.has(out)){ out=s+"_"+k++; } used.add(out); return out;
+};
+
+/* ---- スタイルビルダー ---- */
+function makeStyles(){
+  const fonts=['<font><sz val="10"/><name val="Meiryo UI"/></font>',
+    '<font><sz val="9"/><name val="Meiryo UI"/></font>',
+    '<font><b/><sz val="9"/><color rgb="FFFFFFFF"/><name val="Meiryo UI"/></font>',
+    '<font><sz val="9"/><color rgb="FFFFFFFF"/><name val="Meiryo UI"/></font>',
+    '<font><b/><sz val="9"/><name val="Meiryo UI"/></font>'];
+  const fontOf=(bold,rgb)=>{  // 任意色フォント(キャッシュ)
+    const x='<font>'+(bold?'<b/>':'')+'<sz val="9"/><color rgb="'+rgb+'"/><name val="Meiryo UI"/></font>';
+    let i=fonts.indexOf(x); if(i<0){fonts.push(x); i=fonts.length-1;} return i;
+  };
+  const fills=['<fill><patternFill patternType="none"/></fill>',
+    '<fill><patternFill patternType="gray125"/></fill>'];
+  const borders=['<border><left/><right/><top/><bottom/><diagonal/></border>',
+    '<border><left style="thin"><color rgb="FF808080"/></left><right style="thin"><color rgb="FF808080"/></right>'+
+    '<top style="thin"><color rgb="FF808080"/></top><bottom style="thin"><color rgb="FF808080"/></bottom><diagonal/></border>',
+    '<border><left style="thick"><color rgb="FF70AD47"/></left><right style="thick"><color rgb="FFE06666"/></right>'+
+    '<top style="thin"><color rgb="FF808080"/></top><bottom style="thin"><color rgb="FF808080"/></bottom><diagonal/></border>'];
+  const xfs=['<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'];
+  const cache={};
+  const fillId=(rgb)=>{const x='<fill><patternFill patternType="solid"><fgColor rgb="'+rgb+'"/></patternFill></fill>';
+    let i=fills.indexOf(x); if(i<0){fills.push(x);i=fills.length-1;} return i;};
+  function xf(o){
+    const key=JSON.stringify(o);
+    if(cache[key]!==undefined)return cache[key];
+    const fi=o.fillRgb?fillId(o.fillRgb):0;
+    let a='<xf numFmtId="'+(o.numFmt||0)+'" fontId="'+(o.font||0)+'" fillId="'+fi+'" borderId="'+(o.border||0)+'"'
+      +(o.numFmt?' applyNumberFormat="1"':'')+(fi?' applyFill="1"':'')+(o.border?' applyBorder="1"':'');
+    if(o.halign||o.valign||o.wrap){
+      a+=' applyAlignment="1"><alignment'+(o.halign?' horizontal="'+o.halign+'"':'')
+        +(o.valign?' vertical="'+o.valign+'"':'')+(o.wrap?' wrapText="1"':'')+'/></xf>';
+    }else a+='/>';
+    xfs.push(a); cache[key]=xfs.length-1; return xfs.length-1;
+  }
+  const xml=()=>'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'+
+    '<numFmts count="2"><numFmt numFmtId="164" formatCode="m/d"/><numFmt numFmtId="165" formatCode="yyyy/m/d"/></numFmts>'+
+    '<fonts count="'+fonts.length+'">'+fonts.join("")+'</fonts>'+
+    '<fills count="'+fills.length+'">'+fills.join("")+'</fills>'+
+    '<borders count="'+borders.length+'">'+borders.join("")+'</borders>'+
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'+
+    '<cellXfs count="'+xfs.length+'">'+xfs.join("")+'</cellXfs>'+
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+  return {xf, xml, fontOf};
+}
+const GRAY="FFC0C0C0";   // 休日帯(v2.12.0で濃く。画面CSSの--dayoff-solidと必ず一致させる。検出isGrayHexの範囲180〜235内)
+const normRgb=c=>{c=(c||"#DDEBF7").replace("#","").toUpperCase(); return c.length===6?"FF"+c:c;};
+
+/* ---- カレンダーシートXML(シート単位) ---- */
+function calendarSheetXml(S, sc){
+  const secs=sc.sections, tks=sc.tasks, evs=sc.events;
+  const hidden=(sc.hiddenRows||[]);
+  const isHid=d=>hidden.some(r=>r.start<=d&&d<=r.end);
+  // カレンダー範囲: 画面(buildCalendar)と同一のcalRangeを使う。
+  // 旧実装はここで独自計算(+休日・非表示行で範囲拡張)しており、
+  // 「この日より前を非表示」の範囲(start=画面のCAL0)より前の週がExcelにだけ
+  // 可視行として現れるバグがあった(v2.7.1で根治)。
+  const rg=calRange(tks,evs);
+  const c0=rg.c0, c1=rg.c1;
+  const days=[]; let d=c0; while(d<=c1){days.push(d); d=addDays(d,1);}
+  const rIdx={}; days.forEach((dd,i)=>rIdx[dd]=i);
+  const nSec=secs.length, evCol=2+nSec, HR=4;   // v2.9.0: 3行→4行(メモ行+ページ数行)
+  const cells={}, merges=[];
+  const put=(r,c,o)=>{ (cells[r]=cells[r]||{})[c]=o; };
+  const headXf=S.xf({font:2,fillRgb:"FF4472C4",border:1,halign:"center",valign:"center",wrap:1});
+  secs.forEach((nm,i)=>put(2,2+i,{t:nm,s:headXf}));
+  put(2,evCol,{t:"イベントなど",s:S.xf({font:1,fillRgb:"FFFEF3C7",border:1,halign:"center",valign:"center",wrap:1})});
+  const ownXf=S.xf({font:1,fillRgb:"FFF2F2F2",border:1,halign:"center",valign:"center"});
+  const labXf=S.xf({font:1,halign:"center",valign:"center"});
+  put(3,1,{t:"メモ",s:labXf});                    // 旧「主管」→自由項目(v2.9.0)
+  const owns=sc.owners||[];
+  secs.forEach((nm,i)=>put(3,2+i,{t:owns[i]||"",s:ownXf}));
+  put(4,1,{t:"ページ数",s:labXf});
+  const pgs=sc.pages||[];
+  secs.forEach((nm,i)=>put(4,2+i,{t:pgs[i]||"",s:ownXf}));
+  const xfDate=S.xf({font:1,numFmt:164}), xfDateOff=S.xf({font:1,numFmt:164,fillRgb:GRAY});
+  const xfWd=S.xf({font:1,halign:"center"}), xfWdOff=S.xf({font:1,halign:"center",fillRgb:GRAY});
+  const xfOff=S.xf({fillRgb:GRAY}), xfEv=S.xf({font:1,wrap:1});
+  // カスタム休日の目印(土日祝と重なってもグレーでは判別できないため、イベント列に専用の淡い塗り)
+  const HOLMARK="FFFFF7ED";
+  const xfEvHol=S.xf({font:1,wrap:1,fillRgb:HOLMARK});
+  const evTexts={};
+  evs.forEach(e=>{ evTexts[e.date]=(evTexts[e.date]?evTexts[e.date]+"\n":"")+e.text; });
+  days.forEach((dd,i)=>{
+    const r=HR+1+i, off=isOff(dd);
+    put(r,0,{n:dateSerial(dd),s:off?xfDateOff:xfDate});
+    put(r,1,{t:WD[dow(dd)],s:off?xfWdOff:xfWd});
+    if(off) for(let c=2;c<2+nSec;c++) put(r,c,{s:xfOff});
+    const evt=[HOLIDAYS[dd],customHol[dd],evTexts[dd]].filter(Boolean).join("\n");
+    if(evt) put(r,evCol,{t:evt,s:customHol[dd]?xfEvHol:xfEv});
+  });
+  for(const t of tks){
+    const rgb=normRgb(t.color);
+    let fontId;
+    if(t.tc && t.tc.startsWith("#")) fontId=S.fontOf(!!t.bold,"FF"+t.tc.slice(1).toUpperCase());
+    else{
+      const white = t.tc==="w";
+      fontId = t.bold ? (white?2:4) : (white?3:1);
+    }
+    const joint = rgb==="FF9DC3E6";
+    const xfB=S.xf({font:fontId,fillRgb:rgb,border:joint?2:1,halign:"center",valign:"center",wrap:1});
+    // 土日祝もまたいで1工程=1つの連続ブロック(結合)にする
+    if(rIdx[t.start]===undefined||rIdx[t.end]===undefined)continue;
+    const r1=HR+1+rIdx[t.start], r2=HR+1+rIdx[t.end];
+    const exName=(t.pinned?"📌":"")+t.name;
+    for(let r=r1;r<=r2;r++)for(let c=2+t.col;c<Math.min(2+t.col+t.colSpan,2+nSec);c++)
+      put(r,c,{t:(r===r1&&c===2+t.col)?exName:undefined,s:xfB});
+    const c2=Math.min(2+t.col+t.colSpan-1, 1+nSec);
+    if(r2>r1||c2>2+t.col)
+      merges.push(colL(2+t.col)+r1+":"+colL(c2)+r2);
+  }
+  let rowsXml="";
+  const maxR=HR+days.length;
+  for(let r=1;r<=maxR;r++){
+    const row=cells[r];
+    if(!row){
+      const rowHid0=(r>HR && isHid(days[r-HR-1]))?' hidden="1"':'';
+      rowsXml+='<row r="'+r+'" ht="13.5" customHeight="1"'+rowHid0+'/>';continue;
+    }
+    let cx="";
+    for(const c of Object.keys(row).map(Number).sort((a,b)=>a-b)){
+      const o=row[c], ref=colL(c)+r;
+      if(o.n!==undefined) cx+='<c r="'+ref+'" s="'+o.s+'"><v>'+o.n+'</v></c>';
+      else if(o.t!==undefined) cx+='<c r="'+ref+'" s="'+o.s+'" t="inlineStr"><is><t xml:space="preserve">'+xesc(o.t)+'</t></is></c>';
+      else cx+='<c r="'+ref+'" s="'+o.s+'"/>';
+    }
+    const rowHid = (r>HR && isHid(days[r-HR-1])) ? ' hidden="1"' : '';
+    rowsXml+='<row r="'+r+'" ht="'+(r===2?"40":"13.5")+'" customHeight="1"'+rowHid+'>'+cx+'</row>';
+  }
+  let colsXml='<cols><col min="1" max="1" width="10.6" customWidth="1"/><col min="2" max="2" width="3.6" customWidth="1"/>';
+  colsXml+='<col min="3" max="'+(2+nSec)+'" width="14" customWidth="1"/>';
+  colsXml+='<col min="'+(evCol+1)+'" max="'+(evCol+1)+'" width="21" customWidth="1"/></cols>';
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'+
+    '<sheetViews><sheetView workbookViewId="0"><pane xSplit="2" ySplit="'+HR+'" topLeftCell="C'+(HR+1)+'" state="frozen"/></sheetView></sheetViews>'+
+    '<sheetFormatPr defaultRowHeight="13.5"/>'+colsXml+
+    '<sheetData>'+rowsXml+'</sheetData>'+
+    (merges.length?'<mergeCells count="'+merges.length+'">'+merges.map(m=>'<mergeCell ref="'+m+'"/>').join("")+'</mergeCells>':'')+
+    '</worksheet>';
+}
+/* ---- 工程表シートXML(全シート分・読み込み用の正データ) ---- */
+const TABLE_HEAD=["No","シート","セクション","工程名","種別","開始日","終了日","色","文字色","固定","列数","備考"];
+function exportXlsx(){
+  syncBack();
+  const S=makeStyles();
+  const used=new Set();
+  const sheetDefs=schedules.map(sc=>({name:sanitizeSheet(sc.name,used), xml:calendarSheetXml(S,sc)}));
+  const n=sheetDefs.length;
+  let ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+    '<Default Extension="xml" ContentType="application/xml"/>'+
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>';
+  for(let i=1;i<=n;i++) ct+='<Override PartName="/xl/worksheets/sheet'+i+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+  ct+='<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>';
+  let wbSheets="", wbRels="";
+  sheetDefs.forEach((sd,i)=>{
+    wbSheets+='<sheet name="'+xesc(sd.name)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>';
+    wbRels+='<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>';
+  });
+  wbRels+='<Relationship Id="rId'+(n+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>';
+  const files=[
+    {name:"[Content_Types].xml",data:ct},
+    {name:"_rels/.rels",data:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'},
+    {name:"xl/workbook.xml",data:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'+
+      '<sheets>'+wbSheets+'</sheets></workbook>'},
+    {name:"xl/_rels/workbook.xml.rels",data:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+wbRels+'</Relationships>'},
+    {name:"xl/styles.xml",data:S.xml()},
+  ];
+  sheetDefs.forEach((sd,i)=>files.push({name:"xl/worksheets/sheet"+(i+1)+".xml",data:sd.xml}));
+  const u8=zipStore(files);
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([u8],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+  a.download = importedBase
+    ? sanitizeFileName(importedBase+"_修正")+".xlsx"
+    : "制作スケジュール_"+new Date().toISOString().slice(0,10)+".xlsx";
+  a.click(); URL.revokeObjectURL(a.href);
+}
+/* ---- 読み込み: セル解析(共通) ---- */
+function parseSheetFull(xml, shared){
+  const rows={};
+  const re=/<c r="([A-Z]+)(\d+)"([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  let m;
+  while((m=re.exec(xml))){
+    const col=colN(m[1]), r=+m[2], attrs=m[3]||"", body=m[4]||"";
+    const sAttr=+((attrs.match(/ s="(\d+)"/)||[0,0])[1]);
+    const tAttr=(attrs.match(/t="(\w+)"/)||[])[1];
+    let v=null;
+    if(tAttr==="inlineStr"){
+      v=xunesc((body.match(/<t[^>]*>([\s\S]*?)<\/t>/)||["",""])[1]);
+    }else{
+      const raw=(body.match(/<v>([\s\S]*?)<\/v>/)||[])[1];
+      if(raw!==undefined){
+        if(tAttr==="s") v=shared[+raw];
+        else if(tAttr==="str") v=xunesc(raw);
+        else v=+raw;
+      }
+    }
+    (rows[r]=rows[r]||{})[col]={v, s:sAttr};
+  }
+  const merges=[...xml.matchAll(/<mergeCell ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"/g)]
+    .map(m2=>({c1:colN(m2[1]), r1:+m2[2], c2:colN(m2[3]), r2:+m2[4]}));
+  const hiddenRowNums=new Set();
+  for(const m2 of xml.matchAll(/<row r="(\d+)"[^>]*hidden="1"/g)) hiddenRowNums.add(+m2[1]);
+  return {rows, merges, hiddenRowNums};
+}
+function parseTheme(xml){
+  const def=["FFFFFF","000000","E7E6E6","44546A","4472C4","ED7D31","A5A5A5","FFC000","5B9BD5","70AD47"];
+  if(!xml)return def;
+  const scheme=(xml.match(/<a:clrScheme[\s\S]*?<\/a:clrScheme>/)||[""])[0];
+  const order=["dk1","lt1","dk2","lt2","accent1","accent2","accent3","accent4","accent5","accent6"];
+  const got=order.map(k=>{
+    const mm=scheme.match(new RegExp('<a:'+k+'>[\\s\\S]*?(?:srgbClr val="([0-9A-Fa-f]{6})"|sysClr[^>]*lastClr="([0-9A-Fa-f]{6})")'));
+    return mm?(mm[1]||mm[2]).toUpperCase():null;
+  });
+  // xlsxのtheme indexは lt1,dk1,lt2,dk2,accent1..6 の順
+  const sw=[got[1],got[0],got[3],got[2],...got.slice(4)];
+  return sw.map((c,i)=>c||def[i]);
+}
+function parseStylesForImport(xml){
+  if(!xml)return {fills:[],xfs:[],fonts:[],fontXfs:[]};
+  const fills=[...xml.matchAll(/<fill>([\s\S]*?)<\/fill>/g)].map(mm=>{
+    const f=mm[1];
+    if(!f.includes('patternType="solid"'))return null;
+    const rgb=(f.match(/fgColor[^\/>]*rgb="([0-9A-Fa-f]{8})"/)||[])[1];
+    const th=(f.match(/fgColor[^\/>]*theme="(\d+)"/)||[])[1];
+    const tint=(f.match(/fgColor[^\/>]*tint="(-?[\d.]+)"/)||[])[1];
+    return {rgb:rgb?rgb.toUpperCase():null, theme:th!==undefined?+th:null, tint:tint?+tint:0};
+  });
+  const fonts=[...xml.matchAll(/<font>([\s\S]*?)<\/font>/g)].map(mm=>{
+    const f=mm[1];
+    const rgb=(f.match(/<color[^\/>]*rgb="([0-9A-Fa-f]{8})"/)||[])[1];
+    const th=(f.match(/<color[^\/>]*theme="(\d+)"/)||[])[1];
+    return {bold:f.includes("<b/>")||f.includes("<b "), rgb:rgb?rgb.toUpperCase():null,
+            theme:th!==undefined?+th:null};
+  });
+  const cx=(xml.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/)||["",""])[1];
+  const xfs=[...cx.matchAll(/<xf\b[^>]*>/g)].map(mm=>+((mm[0].match(/fillId="(\d+)"/)||[0,0])[1]));
+  const fontXfs=[...cx.matchAll(/<xf\b[^>]*>/g)].map(mm=>+((mm[0].match(/fontId="(\d+)"/)||[0,0])[1]));
+  return {fills,xfs,fonts,fontXfs};
+}
+function fontOfCell(sIdx, ST){
+  if(!ST.fonts||!ST.fontXfs)return null;
+  return ST.fonts[ST.fontXfs[sIdx]]||null;
+}
+function applyTint(hex,t){
+  const f=(h)=>parseInt(h,16);
+  let [r,g,b]=[f(hex.slice(0,2)),f(hex.slice(2,4)),f(hex.slice(4,6))];
+  const adj=v=>Math.round(t<0? v*(1+t) : v*(1-t)+255*t);
+  return [adj(r),adj(g),adj(b)].map(v=>v.toString(16).padStart(2,"0")).join("").toUpperCase();
+}
+function fillColorOf(sIdx, ST, THEME){
+  const f=ST.fills[ST.xfs[sIdx]];
+  if(!f)return null;
+  let hex=null;
+  if(f.rgb)hex=f.rgb.slice(2);
+  else if(f.theme!=null && THEME[f.theme])hex=applyTint(THEME[f.theme], f.tint||0);
+  return hex;
+}
+const isGrayHex=h=>{
+  if(!h)return false;
+  const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);
+  return Math.abs(r-g)<12&&Math.abs(g-b)<12&&r>=180&&r<=235;
+};
+/* ---- カレンダー形式シート → スケジュール ---- */
+function calendarToSchedule(parsed, ST, THEME, name){
+  const {rows, merges}=parsed;
+  const parsedHidden=parsed.hiddenRowNums;
+  const rowNums=Object.keys(rows).map(Number).sort((a,b)=>a-b);
+  // 日付行 = A列が数値の行
+  const dateRowsArr=rowNums.filter(r=>rows[r][0]&&typeof rows[r][0].v==="number");
+  if(dateRowsArr.length<30)return null;   // カレンダー形式でない
+  // 連続性修復: 最長の整合区間を探し、その末尾をアンカーに行順で振り直す
+  let best={len:1,end:0}, runStart=0;
+  for(let i=1;i<=dateRowsArr.length;i++){
+    const ok=i<dateRowsArr.length &&
+      rows[dateRowsArr[i]][0].v-rows[dateRowsArr[i-1]][0].v===i-runStart-(i-1-runStart);
+    // ↑ 単純化: 直前との差が「間の日付行数」= i-(i-1)=1 とみなす(日付行は1行=1日)
+    const diffOk=i<dateRowsArr.length && rows[dateRowsArr[i]][0].v-rows[dateRowsArr[i-1]][0].v===1;
+    if(!diffOk){ if(i-runStart>best.len)best={len:i-runStart,end:i-1}; runStart=i; }
+  }
+  const anchorIdx=best.end, anchorSerial=rows[dateRowsArr[anchorIdx]][0].v;
+  const dateOf={};   // row -> ISO
+  dateRowsArr.forEach((r,i)=>{ dateOf[r]=serialDate(anchorSerial-(anchorIdx-i)); });
+  let hadHeader=false;
+  // イベント列: 見出しに「イベント」を含む列(1〜3行目を探索)。無ければ13(N)
+  let evCol=13;
+  for(const hr of [1,2,3]){
+    if(!rows[hr])continue;
+    for(const [c,cell] of Object.entries(rows[hr]))
+      if(typeof cell.v==="string"&&cell.v.includes("イベント")){ evCol=+c; }
+  }
+  // メモ行(旧ラベル「主管」も後方互換で読む)とページ数行(A〜B列のラベルで検出)
+  const hasLab=(hr,s)=>rows[hr]&&[0,1].some(c=>rows[hr][c]&&rows[hr][c].v===s);
+  let ownerRow=null, pagesRow=null;
+  for(const hr of [2,3,4,5]){
+    if(ownerRow===null&&(hasLab(hr,"主管")||hasLab(hr,"メモ")))ownerRow=hr;
+    if(pagesRow===null&&hasLab(hr,"ページ数"))pagesRow=hr;
+  }
+  // セクション見出し(2行目 C..evCol-1)
+  const secs=[]; const secOfCol={};
+  for(let c=2;c<evCol;c++){
+    let nm=null;
+    if(rows[2]&&rows[2][c]&&typeof rows[2][c].v==="string"){
+      const lines=rows[2][c].v.replace(/\r/g,"").split("\n")
+        .map(x=>x.replace(/[／\/]+\s*$/,"").trim()).filter(x=>x);
+      if(lines.length){
+        if(/^【.*】$/.test(lines[0])) nm=lines[0]+(lines[1]||"");   // 【セクション1】社長メッセージ
+        else nm=lines[0]+(lines[1]?"/"+lines[1]:"");                 // 表紙/Fujitsu Way
+        if(lines.length>2) nm+="…";
+      }
+    }
+    if(!nm)nm="列"+colL(c); else hadHeader=true;
+    let u=nm,k=2; while(secs.includes(u))u=nm+"("+k+++")";
+    secs.push(u); secOfCol[c]=secs.length-1;
+  }
+  const owns=[], pags=[];
+  for(let c=2;c<evCol;c++){
+    const v=ownerRow&&rows[ownerRow][c]&&rows[ownerRow][c].v;
+    owns.push(v?String(v).replace(/\s+/g," ").trim():"");
+    const pv=pagesRow&&rows[pagesRow][c]&&rows[pagesRow][c].v;
+    pags.push(pv!=null&&String(pv).trim()!==""?String(pv).replace(/\s+/g," ").trim():"");
+  }
+  // ブロック: 結合+単独テキストセル
+  const covered=new Set(); const raw=[];
+  for(const m of merges){
+    if(m.c1<2||m.c2>=evCol)continue;
+    if(dateOf[m.r1]===undefined&&dateOf[m.r2]===undefined)continue;
+    const anchor=rows[m.r1]&&rows[m.r1][m.c1];
+    const text=anchor&&anchor.v!=null?String(anchor.v).replace(/\r/g,"").trim():"";
+    const color=anchor?fillColorOf(anchor.s,ST,THEME):null;
+    raw.push({c1:m.c1,c2:m.c2,r1:m.r1,r2:m.r2,text,color,anchorS:anchor?anchor.s:null});
+    for(let r=m.r1;r<=m.r2;r++)for(let c=m.c1;c<=m.c2;c++)covered.add(r+"_"+c);
+  }
+  for(const r of dateRowsArr){
+    for(let c=2;c<evCol;c++){
+      if(covered.has(r+"_"+c))continue;
+      const cell=rows[r]&&rows[r][c];
+      if(!cell||cell.v==null||String(cell.v).trim()==="")continue;
+      raw.push({c1:c,c2:c,r1:r,r2:r,text:String(cell.v).replace(/\r/g,"").trim(),
+        color:fillColorOf(cell.s,ST,THEME), anchorS:cell.s});
+    }
+  }
+  // 日付割当・整形
+  const tks=[];
+  for(const b of raw){
+    if(!b.text)continue;
+    const d1=dateOf[b.r1]||dateOf[b.r1+1], d2=dateOf[b.r2]||dateOf[b.r2-1];
+    if(!d1||!d2)continue;
+    const col=secOfCol[b.c1]!==undefined?secOfCol[b.c1]:0;
+    const span=Math.max(1,(secOfCol[b.c2]!==undefined?secOfCol[b.c2]:col)-col+1);
+    let color=b.color&&!isGrayHex(b.color)?"#"+b.color:null;
+    tks.push({col, colSpan:span, name:b.text, start:d1, end:d2<d1?d1:d2, color, anchorS:b.anchorS});
+  }
+  // 同列・同名・休日ギャップの統合
+  tks.sort((a,b)=>a.col-b.col||(a.start<b.start?-1:1));
+  const merged=[];
+  for(const x of tks){
+    const m=merged[merged.length-1];
+    if(m&&m.col===x.col&&m.colSpan===x.colSpan&&m.name===x.name&&x.start>m.end){
+      let gap=true,d=addDays(m.end,1);
+      while(d<x.start){ if(!isOff(d)){gap=false;break;} d=addDays(d,1); }
+      if(gap){ m.end=x.end; continue; }
+    }
+    merged.push(x);
+  }
+  // Excelで非表示だった行 → 非表示行として引き継ぐ
+  const hidDates=[];
+  if(parsedHidden)for(const r of dateRowsArr){ if(parsedHidden.has(r)&&dateOf[r])hidDates.push(dateOf[r]); }
+  hidDates.sort();
+  const hidRanges=[];
+  for(const d of hidDates){
+    const m=hidRanges[hidRanges.length-1];
+    if(m && addDays(m.end,1)===d) m.end=d; else hidRanges.push({start:d,end:d});
+  }
+  // カスタム休日の復元
+  //  (a) イベント列セルに目印の塗り(FFF7ED)がある → 曜日を問わずカスタム休日(アプリ書き出し)
+  //  (b) 目印が無い場合 → 平日なのにA〜C列がグレー(手作り/レガシーファイル)
+  const calHol={};
+  for(const r of dateRowsArr){
+    const d=dateOf[r];
+    const ev=rows[r]&&rows[r][evCol];
+    const marked = ev && ev.s!=null &&
+      String(fillColorOf(ev.s,ST,THEME)||"").toUpperCase()==="FFF7ED";
+    let ok=marked;
+    if(!ok){
+      if(dow(d)===0 || dow(d)===6 || HOLIDAYS[d])continue;   // 土日祝は目印なしでは判別不能
+      for(const ci of [0,1,2]){                              // A〜C列のいずれかがグレーなら休日
+        const c=rows[r]&&rows[r][ci];
+        if(c && c.s!=null && isGrayHex(fillColorOf(c.s,ST,THEME))){ ok=true; break; }
+      }
+    }
+    if(!ok)continue;
+    // イベント列は「祝日名/休日名/イベント本文」を改行結合した1セル。休日名=祝日名を除いた先頭行
+    const lines=ev&&ev.v!=null?String(ev.v).replace(/\r/g,"").split("\n").map(x=>x.trim()).filter(Boolean):[];
+    const rest=lines.filter(x=>x!==HOLIDAYS[d]);
+    calHol[d]=rest.length?rest[0]:"休日";
+  }
+  // イベント: 祝日名・カスタム休日名(先頭行)を除いた残りの行をイベントとして取り出す
+  const evs=[];
+  for(const r of dateRowsArr){
+    const cell=rows[r]&&rows[r][evCol];
+    if(!cell||cell.v==null)continue;
+    const d=dateOf[r];
+    const lines=String(cell.v).replace(/\r/g,"").split("\n").map(x=>x.trim()).filter(Boolean);
+    for(const ln of lines){
+      if(HOLIDAYS[d]===ln)continue;         // 祝日名は除外
+      if(calHol[d]===ln)continue;           // カスタム休日名(先頭行)は除外
+      evs.push({date:d, text:ln});
+    }
+  }
+  const out={name, sections:secs, owners:owns, pages:pags, hiddenRows:hidRanges, customHol:calHol,
+    tasks:merged.map((t,i)=>{
+      let nm=t.name, pinned=false;
+      if(nm.startsWith("📌")){ pinned=true; nm=nm.slice(2).replace(/^\s+/,""); }
+      const fo=t.anchorS!=null?fontOfCell(t.anchorS,ST):null;
+      const bold=fo?!!fo.bold:false;
+      let tc=null;
+      if(fo){
+        if(fo.rgb==="FFFFFFFF"||fo.theme===0)tc="w";
+        else if(fo.rgb&&fo.rgb!=="FF000000"&&fo.theme==null)tc="#"+fo.rgb.slice(2);
+        else tc="b";
+      }
+      const o={id:"i"+Date.now()+"_"+i, ...t, name:nm,
+        color:t.color||PALETTE[t.col%PALETTE.length], pinned,
+        ...(tc?{tc}:{}), bold};
+      delete o.anchorS;
+      return o;
+    }),
+    events:evs};
+  // 工程ゼロでも、本物のセクション見出しがあるシートは空タブとして取り込む
+  return (out.tasks.length||out.events.length||hadHeader)?out:null;
+}
+function sheetPathMap(files){
+  const wbXml=files["xl/workbook.xml"]||"";
+  const relsXml=files["xl/_rels/workbook.xml.rels"]||"";
+  const relMap={};
+  [...relsXml.matchAll(/<Relationship\b[^>]*>/g)].forEach(m=>{
+    const tag=m[0];
+    const id=(tag.match(/ Id="([^"]+)"/)||[])[1];
+    const tg=(tag.match(/ Target="([^"]+)"/)||[])[1];
+    if(id&&tg)relMap[id]=tg;
+  });
+  return [...wbXml.matchAll(/<sheet\b[^>]*>/g)].map(m=>{
+    const tag=m[0];
+    const nm=(tag.match(/ name="([^"]+)"/)||[])[1];
+    const rid=(tag.match(/ r:id="([^"]+)"/)||[])[1];
+    if(!nm||!rid)return null;
+    let path=(relMap[rid]||"").replace(/^\//,""); if(path&&!path.startsWith("xl/"))path="xl/"+path;
+    return {name:xunesc(nm), path};
+  }).filter(Boolean);
+}
+function importCalendarBook(files, shared){
+  const sheets=sheetPathMap(files).map(s2=>({name:s2.name, target:s2.path}));
+  const THEME=parseTheme(files["xl/theme/theme1.xml"]);
+  const ST=parseStylesForImport(files["xl/styles.xml"]);
+  const out=[];
+  for(const sh of sheets){
+    if(!sh.target)continue;
+    const xml=files[sh.target]; if(!xml)continue;
+    const sched=calendarToSchedule(parseSheetFull(xml,shared), ST, THEME, sh.name);
+    if(sched)out.push(sched);
+  }
+  return out;
+}
+/* ---- 読み込み本体 ---- */
+async function importXlsx(file){
+  const files=await unzip(await file.arrayBuffer());
+  let shared=[];
+  if(files["xl/sharedStrings.xml"]){
+    shared=[...files["xl/sharedStrings.xml"].matchAll(/<si>([\s\S]*?)<\/si>/g)]
+      .map(m=>{
+        const body=m[1].replace(/<rPh[\s\S]*?<\/rPh>/g,"");   // ふりがなを除外
+        return [...body.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(x=>xunesc(x[1])).join("");
+      });
+  }
+  // 1) 工程表シートを探す
+  let tableRows=null;
+  for(const [name,xml] of Object.entries(files)){
+    if(!/^xl\/worksheets\/sheet\d+\.xml$/.test(name))continue;
+    const p=parseSheetFull(xml,shared);
+    if(p.rows[1] && Object.values(p.rows[1]).some(c=>c.v==="工程名")){ tableRows=p.rows; break; }
+  }
+  let newScheds, newHol=null, analyzed=0, mode="";
+  const smap0=sheetPathMap(files);
+  const hasTheme=files["xl/theme/theme1.xml"], hasStyles=files["xl/styles.xml"];
+  const THEME0=hasTheme?parseTheme(hasTheme):null;
+  const ST0=hasStyles?parseStylesForImport(hasStyles):null;
+  // 1) カレンダーシートを正として解析(ブック順)。Excel上での修正が常に反映される
+  const calScheds=[];
+  for(const sh of smap0){
+    if(!sh.path||!files[sh.path])continue;
+    const p2=parseSheetFull(files[sh.path],shared);
+    if(p2.rows[1] && Object.values(p2.rows[1]).some(c=>c.v==="工程名"))continue;   // 工程表は除外
+    const sched=calendarToSchedule(p2, ST0, THEME0, sh.name);
+    if(sched){ calScheds.push(sched); }
+  }
+  if(calScheds.length){
+    newScheds=calScheds; analyzed=calScheds.length; mode="カレンダー(正)";
+    newHol=Object.assign({}, ...calScheds.map(x=>x.customHol||{}));
+    if(tableRows){
+      // 2) 工程表からはカレンダーに現れない情報だけを補完する。日付・工程名・色は補完しない
+      try{
+        const pr=parseTableRows(tableRows);
+        newHol=Object.assign(newHol||{}, pr.customHol);         // 名称は工程表を優先
+        mode="カレンダー(正)+工程表メタ";
+        const norm=t=>String(t).replace(/\s+/g,"");
+        for(const sc of newScheds){
+          const src=pr.scheds.find(x=>x.name===sc.name);
+          if(!src)continue;
+          // 非表示行: 行属性(正)に加え、工程表の記録も統合
+          if(src.hiddenRows&&src.hiddenRows.length){
+            sc.hiddenRows=(sc.hiddenRows||[]).concat(src.hiddenRows);
+          }
+          // 工程メタ(📌固定/文字色/太字/前面背面)の補完。
+          // 同名工程が複数ある場合の誤マッチを防ぐため3段階: 完全一致→単一候補のみ
+          const byExact=new Map(), byNameSec=new Map(), byName=new Map();
+          const push=(map,k,t)=>{ (map.get(k)||map.set(k,[]).get(k)).push(t); };
+          src.tasks.forEach(t=>{
+            const n=norm(t.name), sec=norm(src.sections[t.col]||"");
+            push(byExact, n+"|"+sec+"|"+t.start, t);
+            push(byNameSec, n+"|"+sec, t);
+            push(byName, n, t);
+          });
+          sc.tasks.forEach(t=>{
+            const n=norm(t.name), sec=norm(sc.sections[t.col]||"");
+            let m=null;
+            const e1=byExact.get(n+"|"+sec+"|"+t.start);
+            if(e1&&e1.length)m=e1[0];
+            if(!m){ const e2=byNameSec.get(n+"|"+sec); if(e2&&e2.length===1)m=e2[0]; }
+            if(!m){ const e3=byName.get(n); if(e3&&e3.length===1)m=e3[0]; }
+            if(!m)return;
+            if(m.pinned)t.pinned=true;
+            if(m.bold)t.bold=true;
+            if(m.tc)t.tc=m.tc;
+            if(m.z)t.z=m.z;
+          });
+        }
+        // カスタム休日名はイベント列にも書かれるため、二重取りを除去
+        if(newHol){
+          for(const sc of newScheds){
+            sc.events=sc.events.filter(e=>{
+              const hol=newHol[e.date];
+              return !(hol && e.text.replace(/\s+/g,"")===String(hol).replace(/\s+/g,""));
+            });
+          }
+        }
+        // 工程表にしかないシート(空タブ等)は末尾に保持
+        const names=new Set(newScheds.map(x=>x.name));
+        for(const x of pr.scheds) if(!names.has(x.name)) newScheds.push(x);
+      }catch(e){ /* メタ補完の失敗は本体を妨げない */ }
+    }
+    // 3) 非表示行の正規化(行属性+工程表記録の統合結果をマージ)
+    for(const sc of newScheds){
+      if(!sc.hiddenRows||!sc.hiddenRows.length)continue;
+      const rs=sc.hiddenRows.slice().sort((a,b)=>a.start<b.start?-1:1);
+      const merged=[];
+      for(const r2 of rs){
+        const m=merged[merged.length-1];
+        if(m&&addDays(m.end,1)>=r2.start){ if(r2.end>m.end)m.end=r2.end; }
+        else merged.push({start:r2.start,end:r2.end});
+      }
+      sc.hiddenRows=merged;
+    }
+  }else if(tableRows){
+    // 4) カレンダーシートが1枚も無い場合のみ、工程表をフル読み込み
+    const pr=parseTableRows(tableRows);
+    newScheds=pr.scheds; newHol=pr.customHol; mode="工程表";
+  }else{
+    throw new Error("読み込めるシートが見つかりません(日付列を持つカレンダー形式シートも工程表シートもありません)。ファイルをClaudeに添付すれば変換できます");
+  }
+  syncBack(); pushUndo();
+  schedules=newScheds;
+  if(newHol)customHol=newHol;
+  loadTab(0); queueSave();
+  return {sheets:newScheds.length,
+    tasks:newScheds.reduce((a,s)=>a+s.tasks.length,0),
+    events:newScheds.reduce((a,s)=>a+s.events.length,0),
+    mode};
+}
+function parseTableRows(rowsMap){
+  const head={}; for(const [c,cell] of Object.entries(rowsMap[1])) head[cell.v]=+c;
+  const need=["セクション","工程名","種別","開始日","終了日"];
+  for(const n of need) if(head[n]===undefined) throw new Error("工程表に「"+n+"」列がありません");
+  const asDate=v=>{
+    if(typeof v==="number")return serialDate(v);
+    if(typeof v==="string"){const t=v.replace(/\//g,"-");
+      if(/^\d{4}-\d{1,2}-\d{1,2}$/.test(t)){const [y,mo,d]=t.split("-");
+        return y+"-"+String(mo).padStart(2,"0")+"-"+String(d).padStart(2,"0");}}
+    return null;
+  };
+  const scheds=[]; const byName={}; const newCustomHol={};
+  const getSched=(nm)=>{
+    if(!byName[nm]){ byName[nm]={name:nm, sections:[], tasks:[], events:[]}; scheds.push(byName[nm]); }
+    return byName[nm];
+  };
+  const rowNums=Object.keys(rowsMap).map(Number).filter(r=>r>1).sort((a,b)=>a-b);
+  for(const r of rowNums){
+    const row=rowsMap[r];
+    const g=n=>head[n]!==undefined&&row[head[n]]?row[head[n]].v:null;
+    const name=g("工程名"); if(name==null||name==="")continue;
+    const kind=String(g("種別")||"期間");
+    if(kind==="主管"){                    // 主管行: セクション登録+主管設定(日付不要)
+      const sc0=getSched(String(g("シート")||"スケジュール"));
+      let sec0=String(g("セクション")||""); if(!sec0)continue;
+      let si0=sc0.sections.indexOf(sec0);
+      if(si0<0){sc0.sections.push(sec0); si0=sc0.sections.length-1;}
+      if(!sc0.owners)sc0.owners=[];
+      sc0.owners[si0]=String(name).trim()==="　"?"":String(name).trim();
+      continue;
+    }
+    const d1=asDate(g("開始日")), d2=asDate(g("終了日"))||d1;
+    if(!d1)continue;
+    if(kind==="休日"){ newCustomHol[d1]=String(name); continue; }
+    if(kind==="非表示行"){
+      const scH=getSched(String(g("シート")||"スケジュール"));
+      if(!scH.hiddenRows)scH.hiddenRows=[];
+      scH.hiddenRows.push({start:d1, end:d2<d1?d1:d2});
+      continue;
+    }
+    const sc=getSched(String(g("シート")||"スケジュール"));
+    if(kind==="イベント"){ sc.events.push({date:d1,text:String(name)}); continue; }
+    let sec=String(g("セクション")||"その他");
+    let si=sc.sections.indexOf(sec); if(si<0){sc.sections.push(sec); si=sc.sections.length-1;}
+    const colorRaw=String(g("色")||"").trim();
+    sc.tasks.push({id:"t"+r+"_"+Math.random().toString(36).slice(2,6), col:si,
+      colSpan:Math.max(1,+(g("列数")||1)||1), name:String(name),
+      start:d1, end:d2<d1?d1:d2,
+      color:/^#?[0-9A-Fa-f]{6}$/.test(colorRaw)?(colorRaw.startsWith("#")?colorRaw:"#"+colorRaw):PALETTE[si%PALETTE.length],
+      tc:(function(v){ v=String(v||"").trim();
+        if(/^#?[0-9A-Fa-f]{6}$/.test(v)) return v.startsWith("#")?v:"#"+v;
+        return v.includes("白")?"w":"b"; })(g("文字色")),
+      pinned:String(g("固定")||"").includes("○"), bold:kind.startsWith("マイルストーン")});
+  }
+  if(!scheds.length||!scheds.some(s=>s.tasks.length))
+    throw new Error("工程表に読み込める工程がありません");
+  scheds.forEach(sc=>{
+    sc.tasks.forEach(t=>{t.colSpan=Math.min(t.colSpan, sc.sections.length-t.col);});
+    if(!sc.owners)sc.owners=[];
+    while(sc.owners.length<sc.sections.length)sc.owners.push("");
+    if(!sc.pages)sc.pages=[];
+    while(sc.pages.length<sc.sections.length)sc.pages.push("");
+  });
+  return {scheds, customHol:newCustomHol};
+}
+
+/* ================= 起動 ================= */
+(async function(){
+  const stored=await loadSaved();
+  const baked=DATA.saved||null;
+  let saved=null;
+  if(stored&&baked) saved=(baked.savedAt||0)>(stored.savedAt||0)?baked:stored;
+  else saved=stored||baked;
+  if(saved){ schedules=saved.schedules; activeTab=Math.min(saved.activeTab||0, schedules.length-1);
+    if(saved.importedBase)importedBase=saved.importedBase;
+    for(const sc0 of schedules)for(const t0 of (sc0.tasks||[])){ if(t0.milestone!==undefined){ t0.bold=!!t0.milestone; delete t0.milestone; } }
+    if(saved.customHol)customHol=saved.customHol; }
+  else{ schedules=[{name:"新規案件", sections:DATA.sections.slice(),
+    owners:DATA.sections.map(()=>""), pages:DATA.sections.map(()=>""), tasks:[], events:[]}];
+    emptyStart=iso(new Date()); }
+  const sc=schedules[activeTab];
+  sections=sc.sections; tasks=sc.tasks; events=sc.events;
+  owners=(sc.owners&&sc.owners.length===sections.length)?sc.owners:sections.map(()=>"");
+  pages=(sc.pages&&sc.pages.length===sections.length)?sc.pages:sections.map(()=>"");
+  hiddenRows=sc.hiddenRows||[];
+  buildCalendar();
+  { const vl=document.getElementById("verLabel"); if(vl)vl.textContent=APP_VERSION; }
+  window.addEventListener("beforeunload",e=>{ if(dirty){ e.preventDefault(); e.returnValue=""; } });
+  updateSaveBadge();
+  render(); renderTabs(); bindPanel(); bindToolbar(); syncUndoBtns();
+  if(HOSTED){ document.getElementById("saveState").textContent="共用環境: 保存はExcel書き出しで"; }
+  if(saved){ document.getElementById("saveState").textContent="前回の編集を復元しました"; }
+})();
+</script>
+</body>
+</html>
